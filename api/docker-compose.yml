@@ -11,8 +11,9 @@ services:
     env_file:
       - .env
     volumes:
-      - pv-cookies:/data
+      - pv-data:/data
+      - ./firebase-sa.json:/data/firebase-sa.json:ro
     stop_grace_period: 10s
 
 volumes:
-  pv-cookies:
+  pv-data:
