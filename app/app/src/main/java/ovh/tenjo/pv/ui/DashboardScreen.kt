@@ -48,11 +48,6 @@ fun DashboardScreen(viewModel: SolarViewModel, modifier: Modifier = Modifier) {
                 .padding(horizontal = 20.dp)
                 .padding(top = 24.dp, bottom = 100.dp),
         ) {
-            // -- Top Bar --
-            TopBar()
-
-            Spacer(Modifier.height(24.dp))
-
             if (state.isLoading) {
                 Box(Modifier.fillMaxWidth().height(300.dp), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
@@ -74,31 +69,6 @@ fun DashboardScreen(viewModel: SolarViewModel, modifier: Modifier = Modifier) {
                 AutoDischargeCard(adState, viewModel)
             }
         }
-    }
-}
-
-// ------------------------------------------------------------------
-// Top Bar
-// ------------------------------------------------------------------
-
-@Composable
-private fun TopBar() {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            Icons.Default.EnergySavingsLeaf,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(28.dp),
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(
-            "Solar Pulse",
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
     }
 }
 
@@ -125,13 +95,6 @@ private fun EnergyFlowSection(state: DashboardState) {
     )
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            "LIVE ENERGY SYSTEM",
-            style = MaterialTheme.typography.labelSmall,
-            color = OnSurfaceVariant,
-        )
-        Spacer(Modifier.height(16.dp))
-
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -306,11 +269,6 @@ private fun EnergyNode(
                 color = color.copy(alpha = 0.7f),
             )
         }
-        Text(
-            label,
-            style = MaterialTheme.typography.labelSmall,
-            color = OnSurfaceVariant,
-        )
     }
 }
 
