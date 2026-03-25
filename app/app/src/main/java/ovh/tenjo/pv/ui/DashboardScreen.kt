@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -22,17 +23,16 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import ovh.tenjo.pv.AutoDischargeState
 import ovh.tenjo.pv.DashboardState
 import ovh.tenjo.pv.SolarViewModel
-import ovh.tenjo.pv.ui.theme.GridBlue
-import ovh.tenjo.pv.ui.theme.OnSurfaceVariant
-import ovh.tenjo.pv.ui.theme.SurfaceContainerHigh
-import ovh.tenjo.pv.ui.theme.SurfaceContainerLow
+import ovh.tenjo.pv.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(viewModel: SolarViewModel, modifier: Modifier = Modifier) {
     val state by viewModel.dashboard.collectAsState()
+    val adState by viewModel.autoDischarge.collectAsState()
 
     PullToRefreshBox(
         isRefreshing = state.isRefreshing,
@@ -67,6 +67,11 @@ fun DashboardScreen(viewModel: SolarViewModel, modifier: Modifier = Modifier) {
 
                 // -- Today Stats --
                 StatsRow(state)
+
+                Spacer(Modifier.height(20.dp))
+
+                // -- Auto-discharge --
+                AutoDischargeCard(adState, viewModel)
             }
         }
     }
@@ -349,6 +354,129 @@ private fun StatCard(
             }
             Spacer(Modifier.height(4.dp))
             Text(label, style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
+        }
+    }
+}
+
+// ------------------------------------------------------------------
+// Auto-discharge card
+// ------------------------------------------------------------------
+
+@Composable
+private fun AutoDischargeCard(state: AutoDischargeState, viewModel: SolarViewModel) {
+    // Auto-clear message
+    LaunchedEffect(state.message) {
+        if (state.message != null) {
+            kotlinx.coroutines.delay(3000)
+            viewModel.clearAutoDischargeMessage()
+        }
+    }
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = SurfaceContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.NightsStay,
+                        contentDescription = null,
+                        tint = if (state.active) EnergyOrange else OnSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Auto-Discharge",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+                if (state.active) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = EnergyOrange.copy(alpha = 0.15f),
+                    ) {
+                        Text(
+                            "ACTIVE",
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = EnergyOrange,
+                        )
+                    }
+                }
+            }
+
+            if (state.active) {
+                Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column {
+                        Text("POWER", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
+                        Text(
+                            "%.2f kW".format(state.dischargePowerKw ?: 0.0),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                        )
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text("REMAINING", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
+                        val mins = state.minutesRemaining ?: 0.0
+                        val hours = (mins / 60).toInt()
+                        val m = (mins % 60).toInt()
+                        Text(
+                            "${hours}h ${m}m",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            Button(
+                onClick = {
+                    if (state.active) viewModel.stopAutoDischarge()
+                    else viewModel.startAutoDischarge()
+                },
+                modifier = Modifier.fillMaxWidth().height(44.dp),
+                shape = RoundedCornerShape(50),
+                enabled = !state.isStarting && !state.isStopping,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (state.active) MaterialTheme.colorScheme.error else EnergyOrange,
+                    contentColor = Color.White,
+                ),
+            ) {
+                if (state.isStarting || state.isStopping) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = Color.White,
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    Icon(
+                        if (state.active) Icons.Default.StopCircle else Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        if (state.active) "Stop Discharge" else "Start Auto-Discharge",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                    )
+                }
+            }
+
+            state.message?.let { msg ->
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    msg,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (msg.startsWith("Error")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                )
+            }
         }
     }
 }

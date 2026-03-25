@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from auth import require_api_key
+from config import MOCK_MODE
 from dependencies import get_session
 from session import SolarSession
 
@@ -33,7 +34,7 @@ MAX_DISCHARGE_POWER_KW = 2.5             # Inverter hard limit
 MIN_SOC_TO_START = 5.0                   # Don't bother if SOC <= this %
 TARGET_HOUR = 2                          # 2:00 AM
 TARGET_MINUTE = 0
-CORRECTION_INTERVAL = 300                # Re-check every 5 min (seconds)
+CORRECTION_INTERVAL = 30 if MOCK_MODE else 300  # 30s in mock, 5 min in production
 TZ = ZoneInfo("Europe/Dublin")
 
 # FusionSolar signal IDs for forced charge/discharge control

@@ -26,6 +26,25 @@ data class HealthResponse(
     val status: String,
 )
 
+data class AutoDischargeResponse(
+    val success: Boolean,
+    @SerializedName("initial_soc") val initialSoc: Double? = null,
+    @SerializedName("discharge_power_kw") val dischargePowerKw: Double? = null,
+    @SerializedName("target_time") val targetTime: String? = null,
+    val detail: String? = null,
+)
+
+data class AutoDischargeStatus(
+    val active: Boolean,
+    @SerializedName("battery_id") val batteryId: String? = null,
+    @SerializedName("current_soc") val currentSoc: Double? = null,
+    @SerializedName("discharge_power_kw") val dischargePowerKw: Double? = null,
+    @SerializedName("target_time") val targetTime: String? = null,
+    @SerializedName("minutes_remaining") val minutesRemaining: Double? = null,
+    @SerializedName("hours_remaining") val hoursRemaining: Double? = null,
+    @SerializedName("last_adjustment") val lastAdjustment: String? = null,
+)
+
 // ------------------------------------------------------------------
 // Retrofit interface
 // ------------------------------------------------------------------
@@ -37,6 +56,15 @@ interface SolarApiService {
 
     @GET("dashboard")
     suspend fun getDashboard(): DashboardData
+
+    @POST("batteries/{batteryId}/auto-discharge")
+    suspend fun startAutoDischarge(@Path("batteryId") batteryId: String): AutoDischargeResponse
+
+    @POST("batteries/{batteryId}/auto-discharge/stop")
+    suspend fun stopAutoDischarge(@Path("batteryId") batteryId: String): AutoDischargeResponse
+
+    @GET("batteries/{batteryId}/auto-discharge/status")
+    suspend fun getAutoDischargeStatus(@Path("batteryId") batteryId: String): AutoDischargeStatus
 }
 
 // ------------------------------------------------------------------
@@ -46,6 +74,8 @@ interface SolarApiService {
 object SolarApiClient {
     var baseUrl: String = "http://10.0.2.2:8000/"
     var apiKey: String = ""
+
+    const val BATTERY_ID = "NE=239198746"
 
     val service: SolarApiService by lazy {
         Retrofit.Builder()
