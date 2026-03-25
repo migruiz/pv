@@ -1,5 +1,6 @@
 package ovh.tenjo.pv.ui
 
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -18,7 +19,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -112,6 +112,22 @@ private fun TopBar() {
 
 @Composable
 private fun EnergyFlowSection(state: DashboardState) {
+    val infiniteTransition = rememberInfiniteTransition(label = "flow")
+
+    // Three staggered particles per path — slower with wider spacing
+    val duration = 3500
+    val spacing = duration / 3
+    val p1 by infiniteTransition.animateFloat(0f, 1f, infiniteRepeatable(tween(duration, easing = LinearEasing)), label = "p1")
+    val p2 by infiniteTransition.animateFloat(0f, 1f, infiniteRepeatable(tween(duration, easing = LinearEasing), initialStartOffset = StartOffset(spacing)), label = "p2")
+    val p3 by infiniteTransition.animateFloat(0f, 1f, infiniteRepeatable(tween(duration, easing = LinearEasing), initialStartOffset = StartOffset(spacing * 2)), label = "p3")
+
+    // Glow pulse
+    val glowAlpha by infiniteTransition.animateFloat(
+        0.15f, 0.45f,
+        infiniteRepeatable(tween(2000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "glow",
+    )
+
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             "LIVE ENERGY SYSTEM",
@@ -127,14 +143,98 @@ private fun EnergyFlowSection(state: DashboardState) {
                 .padding(horizontal = 16.dp),
             contentAlignment = Alignment.Center,
         ) {
-            // Dashed cross lines
-            val lineColor = OutlineVariant
+            val primaryColor = MaterialTheme.colorScheme.primary
+            val secondaryColor = MaterialTheme.colorScheme.secondary
+            val tertiaryColor = GridBlue
+            val homeColor = Color.White
+
             Canvas(Modifier.fillMaxSize()) {
                 val cx = size.width / 2
                 val cy = size.height / 2
-                val dash = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
-                drawLine(lineColor, Offset(cx, size.height * 0.12f), Offset(cx, size.height * 0.88f), strokeWidth = 1.5f, pathEffect = dash)
-                drawLine(lineColor, Offset(size.width * 0.12f, cy), Offset(size.width * 0.88f, cy), strokeWidth = 1.5f, pathEffect = dash)
+                val nodeOffset = size.width * 0.18f
+
+                val topY = size.height * 0.15f + nodeOffset
+                val bottomY = size.height * 0.85f - nodeOffset
+                val leftX = size.width * 0.15f + nodeOffset
+                val rightX = size.width * 0.85f - nodeOffset
+
+                val dotR = 4.dp.toPx()
+                val glowR = 12.dp.toPx()
+                val lineWidth = 2.dp.toPx()
+
+                // Helper to draw a glowing line between two points
+                fun drawFlowLine(from: Offset, to: Offset, color: Color, active: Boolean) {
+                    // Faint base line always visible
+                    drawLine(color.copy(alpha = 0.12f), from, to, strokeWidth = lineWidth, cap = StrokeCap.Round)
+                    if (active) {
+                        // Brighter active line
+                        drawLine(color.copy(alpha = 0.35f), from, to, strokeWidth = lineWidth, cap = StrokeCap.Round)
+                    }
+                }
+
+                // Helper to draw a stream of 3 glowing particles along a path
+                fun drawParticleStream(
+                    from: Offset, to: Offset, color: Color,
+                    prog1: Float, prog2: Float, prog3: Float,
+                ) {
+                    listOf(prog1, prog2, prog3).forEach { t ->
+                        val pos = Offset(
+                            from.x + (to.x - from.x) * t,
+                            from.y + (to.y - from.y) * t,
+                        )
+                        // Outer glow
+                        drawCircle(color.copy(alpha = glowAlpha * 0.5f), glowR, pos)
+                        // Bright core
+                        drawCircle(color, dotR, pos)
+                        // Hot center
+                        drawCircle(Color.White.copy(alpha = 0.6f), dotR * 0.45f, pos)
+                    }
+                }
+
+                val center = Offset(cx, cy)
+                val topPt = Offset(cx, topY)
+                val bottomPt = Offset(cx, bottomY)
+                val leftPt = Offset(leftX, cy)
+                val rightPt = Offset(rightX, cy)
+
+                val pvActive = state.pvPowerKw > 0.01
+                val battActive = state.batteryPowerKw > 0.005
+                val homeActive = state.homePowerKw > 0.01
+                val gridActive = state.gridPowerKw > 0.01
+
+                // Draw lines
+                drawFlowLine(topPt, center, primaryColor, pvActive)
+                drawFlowLine(leftPt, center, secondaryColor, battActive)
+                drawFlowLine(center, rightPt, homeColor, homeActive)
+                drawFlowLine(center, bottomPt, tertiaryColor, gridActive)
+
+                // PV particles (top → center)
+                if (pvActive) {
+                    drawParticleStream(topPt, center, primaryColor, p1, p2, p3)
+                }
+
+                // Battery particles
+                if (battActive) {
+                    if (state.batteryCharging) {
+                        drawParticleStream(center, leftPt, secondaryColor, p1, p2, p3)
+                    } else {
+                        drawParticleStream(leftPt, center, secondaryColor, p1, p2, p3)
+                    }
+                }
+
+                // Home particles (center → right)
+                if (homeActive) {
+                    drawParticleStream(center, rightPt, homeColor, p1, p2, p3)
+                }
+
+                // Grid particles
+                if (gridActive) {
+                    if (state.gridImporting) {
+                        drawParticleStream(bottomPt, center, tertiaryColor, p1, p2, p3)
+                    } else {
+                        drawParticleStream(center, bottomPt, tertiaryColor, p1, p2, p3)
+                    }
+                }
             }
 
             // PV — Top
@@ -145,29 +245,32 @@ private fun EnergyFlowSection(state: DashboardState) {
                 label = "SOLAR PV",
                 color = MaterialTheme.colorScheme.primary,
             )
-            // Battery — Left
+            // Battery — Left (show SOC + power + direction)
+            val battDir = if (state.batteryCharging) "▲ charging" else "▼ discharging"
             EnergyNode(
                 modifier = Modifier.align(Alignment.CenterStart).padding(start = 4.dp),
                 icon = Icons.Default.BatteryChargingFull,
                 value = "%.0f%%".format(state.batterySoc),
-                label = "BATTERY",
+                subtitle = "%.3f kW".format(state.batteryPowerKw),
+                label = if (state.batteryPowerKw > 0.005) battDir else "BATTERY",
                 color = MaterialTheme.colorScheme.secondary,
             )
-            // Grid — Right
+            // Home — Right
             EnergyNode(
                 modifier = Modifier.align(Alignment.CenterEnd).padding(end = 4.dp),
-                icon = Icons.Default.Bolt,
-                value = "%.2f kW".format(state.gridPowerKw),
-                label = "GRID",
-                color = GridBlue,
-            )
-            // Home — Bottom
-            EnergyNode(
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp),
                 icon = Icons.Default.Home,
                 value = "%.2f kW".format(state.homePowerKw),
                 label = "HOME",
                 color = MaterialTheme.colorScheme.onSurface,
+            )
+            // Grid — Bottom (show power + direction)
+            val gridDir = if (state.gridImporting) "↓ import" else "↑ export"
+            EnergyNode(
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp),
+                icon = Icons.Default.Bolt,
+                value = "%.2f kW".format(state.gridPowerKw),
+                label = if (state.gridPowerKw > 0.01) gridDir else "GRID",
+                color = GridBlue,
             )
         }
     }
@@ -178,6 +281,7 @@ private fun EnergyNode(
     modifier: Modifier = Modifier,
     icon: ImageVector,
     value: String,
+    subtitle: String? = null,
     label: String,
     color: Color,
 ) {
@@ -199,6 +303,13 @@ private fun EnergyNode(
             style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
             color = color,
         )
+        if (subtitle != null) {
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = color.copy(alpha = 0.7f),
+            )
+        }
         Text(
             label,
             style = MaterialTheme.typography.labelSmall,

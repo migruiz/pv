@@ -32,10 +32,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Configure API — change these for your network setup
-        // Emulator: "http://10.0.2.2:8000/"
-        // Real device on same WiFi: "http://<your-pc-ip>:8000/"
-        SolarApiClient.baseUrl = "http://10.0.2.2:8000/"
+        // Configure API — using adb reverse tcp:8000 tcp:8000
+        // so localhost on the phone maps to the PC's port 8000 via USB
+        SolarApiClient.baseUrl = "http://localhost:8000/"
         SolarApiClient.apiKey = "pCcnYvYPl5IwmWbCpKvU1D9SdQVzp7xWMXhU2YHf_vs"
 
         setContent {

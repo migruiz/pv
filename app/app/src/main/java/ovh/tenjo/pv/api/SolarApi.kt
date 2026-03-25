@@ -38,6 +38,23 @@ data class ForcedChargeResponse(
     val mode: String?,
 )
 
+data class DashboardData(
+    @SerializedName("pv_kw") val pvKw: Double,
+    @SerializedName("battery_kw") val batteryKw: Double,
+    @SerializedName("battery_soc") val batterySoc: Double,
+    @SerializedName("grid_kw") val gridKw: Double,
+    @SerializedName("home_kw") val homeKw: Double,
+    @SerializedName("grid_importing") val gridImporting: Boolean,
+    @SerializedName("battery_charging") val batteryCharging: Boolean,
+    @SerializedName("energy_today_kwh") val energyTodayKwh: Double,
+    @SerializedName("total_energy_kwh") val totalEnergyKwh: Double,
+    @SerializedName("battery_status") val batteryStatus: String,
+    @SerializedName("battery_capacity") val batteryCapacity: Double,
+    @SerializedName("charged_today_kwh") val chargedTodayKwh: Double,
+    @SerializedName("discharged_today_kwh") val dischargedTodayKwh: Double,
+    @SerializedName("battery_charge_discharge_kw") val batteryChargeDischargeKw: Double,
+)
+
 data class HealthResponse(
     val status: String,
 )
@@ -50,6 +67,9 @@ interface SolarApiService {
 
     @GET("health")
     suspend fun health(): HealthResponse
+
+    @GET("dashboard")
+    suspend fun getDashboard(): DashboardData
 
     @GET("status")
     suspend fun getStatus(): PowerStatus

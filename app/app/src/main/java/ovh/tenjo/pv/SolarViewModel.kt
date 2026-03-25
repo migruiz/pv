@@ -17,11 +17,13 @@ data class DashboardState(
     val pvPowerKw: Double = 0.0,
     val batterySoc: Double = 0.0,
     val batteryPowerKw: Double = 0.0,
+    val batteryCharging: Boolean = false,
     val batteryStatus: String = "—",
     val batteryCapacity: Double = 0.0,
     val chargedTodayKwh: Double = 0.0,
     val dischargedTodayKwh: Double = 0.0,
     val gridPowerKw: Double = 0.0,
+    val gridImporting: Boolean = false,
     val homePowerKw: Double = 0.0,
     val energyTodayKwh: Double = 0.0,
     val consumedTodayKwh: Double = 0.0,
@@ -68,34 +70,31 @@ class SolarViewModel : ViewModel() {
         viewModelScope.launch {
             _dashboard.value = _dashboard.value.copy(isLoading = true, error = null)
             try {
-                val status = api.getStatus()
-                val battery = api.getBatteryStatus(SolarApiClient.BATTERY_ID)
-
-                // Approximate home load and grid from available data
-                val homePower = status.currentPowerKw + battery.currentChargeDischargeKw
-                val gridPower = homePower - status.currentPowerKw + battery.currentChargeDischargeKw
+                val d = api.getDashboard()
 
                 _dashboard.value = DashboardState(
-                    pvPowerKw = status.currentPowerKw,
-                    batterySoc = battery.stateOfCharge,
-                    batteryPowerKw = battery.currentChargeDischargeKw,
-                    batteryStatus = battery.operatingStatus,
-                    batteryCapacity = battery.ratedCapacity,
-                    chargedTodayKwh = battery.totalChargedTodayKwh,
-                    dischargedTodayKwh = battery.totalDischargedTodayKwh,
-                    gridPowerKw = gridPower.coerceAtLeast(0.0),
-                    homePowerKw = homePower.coerceAtLeast(0.0),
-                    energyTodayKwh = status.energyTodayKwh,
-                    consumedTodayKwh = battery.totalDischargedTodayKwh + status.energyTodayKwh,
-                    totalEnergyKwh = status.totalEnergyKwh,
+                    pvPowerKw = d.pvKw,
+                    batterySoc = d.batterySoc,
+                    batteryPowerKw = d.batteryChargeDischargeKw,
+                    batteryCharging = d.batteryCharging,
+                    batteryStatus = d.batteryStatus,
+                    batteryCapacity = d.batteryCapacity,
+                    chargedTodayKwh = d.chargedTodayKwh,
+                    dischargedTodayKwh = d.dischargedTodayKwh,
+                    gridPowerKw = d.gridKw,
+                    gridImporting = d.gridImporting,
+                    homePowerKw = d.homeKw,
+                    energyTodayKwh = d.energyTodayKwh,
+                    consumedTodayKwh = d.dischargedTodayKwh + d.energyTodayKwh,
+                    totalEnergyKwh = d.totalEnergyKwh,
                     isLoading = false,
                 )
 
                 // Sync battery control state
                 _batteryControl.value = _batteryControl.value.copy(
-                    soc = battery.stateOfCharge,
-                    status = battery.operatingStatus,
-                    currentPowerKw = battery.currentChargeDischargeKw,
+                    soc = d.batterySoc,
+                    status = d.batteryStatus,
+                    currentPowerKw = d.batteryChargeDischargeKw,
                 )
             } catch (e: Exception) {
                 _dashboard.value = _dashboard.value.copy(
