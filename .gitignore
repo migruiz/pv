@@ -4,3 +4,7 @@ dockerhub_credentials.txt
 __pycache__/
 *.pyc
 .venv/
+
+# Firebase credentials
+api/firebase-sa.json
+app/app/google-services.json

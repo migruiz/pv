@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+import notifications
 from auth import require_api_key
 from config import MOCK_MODE
 from dependencies import get_session
@@ -139,6 +140,7 @@ async def _correction_loop(app_state, session: SolarSession, battery_id: str):
                     await session.post_config_signals(battery_id, _stop_command())
                 except Exception as exc:
                     logger.error("Failed to stop discharge at target: %s", exc)
+                notifications.notify_discharge_stopped("Target time reached")
                 break
 
             # Read current SOC
@@ -157,6 +159,7 @@ async def _correction_loop(app_state, session: SolarSession, battery_id: str):
                     await session.post_config_signals(battery_id, _stop_command())
                 except Exception as exc:
                     logger.error("Failed to stop discharge: %s", exc)
+                notifications.notify_discharge_stopped(f"SOC too low ({soc:.1f}%)")
                 break
 
             # Send adjusted command
@@ -175,6 +178,7 @@ async def _correction_loop(app_state, session: SolarSession, battery_id: str):
             app_state.auto_discharge_status = _build_status_dict(
                 battery_id, soc, power_kw, minutes_left
             )
+            notifications.notify_discharge_update(soc, power_kw, minutes_left)
 
     except asyncio.CancelledError:
         logger.info("Auto-discharge loop cancelled")
@@ -182,6 +186,7 @@ async def _correction_loop(app_state, session: SolarSession, battery_id: str):
             await session.post_config_signals(battery_id, _stop_command())
         except Exception:
             pass
+        notifications.notify_discharge_stopped("Manually stopped")
         raise
     finally:
         app_state.auto_discharge_status = {"active": False}
@@ -235,6 +240,7 @@ async def start(
     request.app.state.auto_discharge_status = _build_status_dict(
         battery_id, soc, power_kw, minutes_left
     )
+    notifications.notify_discharge_started(soc, power_kw, minutes_left)
 
     return {
         "success": True,

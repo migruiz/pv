@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
+import notifications
 from config import KEEP_ALIVE_INTERVAL, MOCK_MODE, MOCK_URL
 from routers import auto_discharge, dashboard, health
 
@@ -40,6 +41,8 @@ async def lifespan(app: FastAPI):
     app.state.session = session
     app.state.auto_discharge_task = None
     app.state.auto_discharge_status = {"active": False}
+
+    notifications.init_firebase()
 
     if not MOCK_MODE:
         try:

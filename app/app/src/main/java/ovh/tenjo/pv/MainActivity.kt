@@ -1,19 +1,30 @@
 package ovh.tenjo.pv
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.google.firebase.messaging.FirebaseMessaging
 import ovh.tenjo.pv.api.SolarApiClient
 import ovh.tenjo.pv.ui.DashboardScreen
 import ovh.tenjo.pv.ui.theme.PVManagerTheme
 
 class MainActivity : ComponentActivity() {
+
+    private val notificationPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { /* granted or not — FCM still works, just silently */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -21,6 +32,17 @@ class MainActivity : ComponentActivity() {
         // Local API via ADB reverse (adb reverse tcp:8000 tcp:8000)
         SolarApiClient.baseUrl = "http://localhost:8000/"
         SolarApiClient.apiKey = "test"
+
+        // Request notification permission (Android 13+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        // Subscribe to auto_discharge topic — all devices get notifications
+        FirebaseMessaging.getInstance().subscribeToTopic("auto_discharge")
+            .addOnSuccessListener { Log.d("FCM", "Subscribed to auto_discharge topic") }
 
         setContent {
             PVManagerTheme {
