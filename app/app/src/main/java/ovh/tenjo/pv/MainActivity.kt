@@ -32,9 +32,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Configure API — using adb reverse tcp:8000 tcp:8000
-        // so localhost on the phone maps to the PC's port 8000 via USB
-        SolarApiClient.baseUrl = "http://localhost:8000/"
+        // API hosted on Raspberry Pi via Cloudflare tunnel
+        SolarApiClient.baseUrl = "https://pv.tenjo.ovh/"
         SolarApiClient.apiKey = "pCcnYvYPl5IwmWbCpKvU1D9SdQVzp7xWMXhU2YHf_vs"
 
         setContent {
