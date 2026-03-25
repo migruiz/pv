@@ -1,5 +1,6 @@
 .env
 cookies.json
+dockerhub_credentials.txt
 __pycache__/
 *.pyc
 .venv/
