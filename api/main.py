@@ -13,8 +13,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 
 import notifications
-from config import KEEP_ALIVE_INTERVAL, MOCK_MODE, MOCK_URL
+from config import BATTERY_DN, KEEP_ALIVE_INTERVAL, MOCK_MODE, MOCK_URL
 from routers import auto_discharge, dashboard, health
+from routers.auto_discharge import daily_scheduler
 
 load_dotenv()
 
@@ -61,8 +62,14 @@ async def lifespan(app: FastAPI):
 
         keep_alive_task = asyncio.create_task(_keep_alive_loop())
 
+    # Daily auto-discharge scheduler (10 PM)
+    scheduler_task = asyncio.create_task(
+        daily_scheduler(app.state, session, BATTERY_DN)
+    )
+
     yield
 
+    scheduler_task.cancel()
     if app.state.auto_discharge_task and not app.state.auto_discharge_task.done():
         app.state.auto_discharge_task.cancel()
     if keep_alive_task:

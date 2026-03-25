@@ -37,6 +37,8 @@ TARGET_HOUR = 2                          # 2:00 AM
 TARGET_MINUTE = 0
 CORRECTION_INTERVAL = 30 if MOCK_MODE else 300  # 30s in mock, 5 min in production
 TZ = ZoneInfo("Europe/Dublin")
+SCHEDULE_HOUR = 22                       # Auto-start at 10:00 PM
+SCHEDULE_MINUTE = 0
 
 # FusionSolar signal IDs for forced charge/discharge control
 SIGNALS = {
@@ -194,6 +196,84 @@ async def _correction_loop(app_state, session: SolarSession, battery_id: str):
         logger.info("Auto-discharge loop ended")
 
 # ------------------------------------------------------------------
+# Shared start logic (used by endpoint and scheduler)
+# ------------------------------------------------------------------
+
+async def _start_discharge(app_state, session, battery_id: str) -> dict:
+    """Start auto-discharge. Returns result dict or raises on failure."""
+    b = await session.call("get_battery_basic_stats", battery_id)
+    soc = b.state_of_charge
+
+    minutes_left = _minutes_until_target()
+    power_kw = _calc_discharge_power(soc, minutes_left)
+
+    if power_kw is None:
+        raise ValueError(
+            f"Discharge not worthwhile: SOC={soc}%, minutes_to_target={minutes_left:.0f}"
+        )
+
+    duration_min = int(min(minutes_left, 1440))
+    await session.post_config_signals(
+        battery_id, _build_discharge_command(power_kw, duration_min)
+    )
+
+    app_state.auto_discharge_task = asyncio.create_task(
+        _correction_loop(app_state, session, battery_id)
+    )
+    app_state.auto_discharge_status = _build_status_dict(
+        battery_id, soc, power_kw, minutes_left
+    )
+    notifications.notify_discharge_started(soc, power_kw, minutes_left)
+
+    return {
+        "success": True,
+        "initial_soc": soc,
+        "discharge_power_kw": round(power_kw, 3),
+        "remaining_energy_kwh": round((soc / 100.0) * BATTERY_REAL_CAPACITY_KWH, 3),
+        "duration_min": duration_min,
+        "target_time": _build_target_time().isoformat(),
+    }
+
+
+# ------------------------------------------------------------------
+# Daily scheduler — auto-start at 10 PM
+# ------------------------------------------------------------------
+
+def _seconds_until_schedule() -> float:
+    """Seconds until the next scheduled start time (10 PM Dublin)."""
+    now = datetime.now(TZ)
+    target = now.replace(hour=SCHEDULE_HOUR, minute=SCHEDULE_MINUTE, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return (target - now).total_seconds()
+
+
+async def daily_scheduler(app_state, session, battery_id: str):
+    """Background task that auto-starts discharge at 10 PM every day."""
+    while True:
+        wait = _seconds_until_schedule()
+        logger.info(
+            "Daily scheduler: next auto-discharge in %.0f min at %s %02d:%02d",
+            wait / 60, TZ, SCHEDULE_HOUR, SCHEDULE_MINUTE,
+        )
+        await asyncio.sleep(wait)
+
+        # Skip if already running
+        if (
+            app_state.auto_discharge_task is not None
+            and not app_state.auto_discharge_task.done()
+        ):
+            logger.info("Daily scheduler: auto-discharge already running, skipping")
+            continue
+
+        try:
+            result = await _start_discharge(app_state, session, battery_id)
+            logger.info("Daily scheduler: auto-discharge started — SOC=%.1f%%", result["initial_soc"])
+        except Exception as exc:
+            logger.error("Daily scheduler: failed to start auto-discharge: %s", exc)
+
+
+# ------------------------------------------------------------------
 # Endpoints
 # ------------------------------------------------------------------
 
@@ -211,45 +291,13 @@ async def start(
         raise HTTPException(status_code=409, detail="Auto-discharge is already running")
 
     try:
-        b = await session.call("get_battery_basic_stats", battery_id)
-        soc = b.state_of_charge
+        result = await _start_discharge(request.app.state, session, battery_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to read battery: {exc}")
+        raise HTTPException(status_code=502, detail=str(exc))
 
-    minutes_left = _minutes_until_target()
-    power_kw = _calc_discharge_power(soc, minutes_left)
-
-    if power_kw is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Discharge not worthwhile: SOC={soc}%, minutes_to_target={minutes_left:.0f}",
-        )
-
-    duration_min = int(min(minutes_left, 1440))
-    try:
-        await session.post_config_signals(
-            battery_id, _build_discharge_command(power_kw, duration_min)
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to start discharge: {exc}")
-
-    # Start background correction loop
-    request.app.state.auto_discharge_task = asyncio.create_task(
-        _correction_loop(request.app.state, session, battery_id)
-    )
-    request.app.state.auto_discharge_status = _build_status_dict(
-        battery_id, soc, power_kw, minutes_left
-    )
-    notifications.notify_discharge_started(soc, power_kw, minutes_left)
-
-    return {
-        "success": True,
-        "initial_soc": soc,
-        "discharge_power_kw": round(power_kw, 3),
-        "remaining_energy_kwh": round((soc / 100.0) * BATTERY_REAL_CAPACITY_KWH, 3),
-        "duration_min": duration_min,
-        "target_time": _build_target_time().isoformat(),
-    }
+    return result
 
 
 @router.post("/stop")
