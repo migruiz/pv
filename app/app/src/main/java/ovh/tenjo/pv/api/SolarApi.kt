@@ -9,50 +9,17 @@ import retrofit2.http.*
 // Data models
 // ------------------------------------------------------------------
 
-data class PowerStatus(
-    @SerializedName("current_power_kw") val currentPowerKw: Double,
-    @SerializedName("energy_today_kwh") val energyTodayKwh: Double,
-    @SerializedName("total_energy_kwh") val totalEnergyKwh: Double,
-)
-
-data class BatteryStatus(
-    @SerializedName("state_of_charge") val stateOfCharge: Double,
-    @SerializedName("rated_capacity") val ratedCapacity: Double,
-    @SerializedName("operating_status") val operatingStatus: String,
-    @SerializedName("backup_time") val backupTime: String,
-    @SerializedName("bus_voltage") val busVoltage: Double,
-    @SerializedName("total_charged_today_kwh") val totalChargedTodayKwh: Double,
-    @SerializedName("total_discharged_today_kwh") val totalDischargedTodayKwh: Double,
-    @SerializedName("current_charge_discharge_kw") val currentChargeDischargeKw: Double,
-)
-
-data class ForcedChargeRequest(
-    val mode: String,            // "stop", "charge", "discharge"
-    @SerializedName("power_kw") val powerKw: Double = 0.7,
-    @SerializedName("setting_mode") val settingMode: String = "duration",
-    @SerializedName("duration_min") val durationMin: Int = 60,
-)
-
-data class ForcedChargeResponse(
-    val success: Boolean,
-    val mode: String?,
-)
-
 data class DashboardData(
     @SerializedName("pv_kw") val pvKw: Double,
-    @SerializedName("battery_kw") val batteryKw: Double,
     @SerializedName("battery_soc") val batterySoc: Double,
-    @SerializedName("grid_kw") val gridKw: Double,
-    @SerializedName("home_kw") val homeKw: Double,
-    @SerializedName("grid_importing") val gridImporting: Boolean,
-    @SerializedName("battery_charging") val batteryCharging: Boolean,
-    @SerializedName("energy_today_kwh") val energyTodayKwh: Double,
-    @SerializedName("total_energy_kwh") val totalEnergyKwh: Double,
-    @SerializedName("battery_status") val batteryStatus: String,
-    @SerializedName("battery_capacity") val batteryCapacity: Double,
-    @SerializedName("charged_today_kwh") val chargedTodayKwh: Double,
-    @SerializedName("discharged_today_kwh") val dischargedTodayKwh: Double,
     @SerializedName("battery_charge_discharge_kw") val batteryChargeDischargeKw: Double,
+    @SerializedName("battery_charging") val batteryCharging: Boolean,
+    @SerializedName("grid_kw") val gridKw: Double,
+    @SerializedName("grid_importing") val gridImporting: Boolean,
+    @SerializedName("home_kw") val homeKw: Double,
+    @SerializedName("energy_today_kwh") val energyTodayKwh: Double,
+    @SerializedName("discharged_today_kwh") val dischargedTodayKwh: Double,
+    @SerializedName("total_energy_kwh") val totalEnergyKwh: Double,
 )
 
 data class HealthResponse(
@@ -70,18 +37,6 @@ interface SolarApiService {
 
     @GET("dashboard")
     suspend fun getDashboard(): DashboardData
-
-    @GET("status")
-    suspend fun getStatus(): PowerStatus
-
-    @GET("batteries/{batteryId}")
-    suspend fun getBatteryStatus(@Path("batteryId") batteryId: String): BatteryStatus
-
-    @POST("batteries/{batteryId}/forced-charge")
-    suspend fun setForcedCharge(
-        @Path("batteryId") batteryId: String,
-        @Body request: ForcedChargeRequest,
-    ): ForcedChargeResponse
 }
 
 // ------------------------------------------------------------------
@@ -89,13 +44,8 @@ interface SolarApiService {
 // ------------------------------------------------------------------
 
 object SolarApiClient {
-    // For emulator → host: http://10.0.2.2:8000
-    // For real device on same network: http://<your-pc-ip>:8000
     var baseUrl: String = "http://10.0.2.2:8000/"
     var apiKey: String = ""
-
-    // Known device IDs from your plant
-    const val BATTERY_ID = "NE=239198746"
 
     val service: SolarApiService by lazy {
         Retrofit.Builder()

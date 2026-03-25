@@ -5,12 +5,10 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -21,27 +19,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import ovh.tenjo.pv.DashboardState
 import ovh.tenjo.pv.SolarViewModel
-import ovh.tenjo.pv.ui.theme.*
+import ovh.tenjo.pv.ui.theme.GridBlue
+import ovh.tenjo.pv.ui.theme.OnSurfaceVariant
+import ovh.tenjo.pv.ui.theme.SurfaceContainerHigh
+import ovh.tenjo.pv.ui.theme.SurfaceContainerLow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DashboardScreen(
-    viewModel: SolarViewModel,
-    onBatteryControlClick: () -> Unit,
-) {
+fun DashboardScreen(viewModel: SolarViewModel, modifier: Modifier = Modifier) {
     val state by viewModel.dashboard.collectAsState()
 
     PullToRefreshBox(
         isRefreshing = state.isRefreshing,
         onRefresh = { viewModel.pullToRefresh() },
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surface),
     ) {
@@ -71,11 +67,6 @@ fun DashboardScreen(
 
                 // -- Today Stats --
                 StatsRow(state)
-
-                Spacer(Modifier.height(20.dp))
-
-                // -- Battery Card --
-                BatteryCard(state, onBatteryControlClick)
             }
         }
     }
@@ -89,28 +80,19 @@ fun DashboardScreen(
 private fun TopBar() {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                Icons.Default.EnergySavingsLeaf,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(28.dp),
-            )
-            Spacer(Modifier.width(10.dp))
-            Text(
-                "Solar Pulse",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-        }
         Icon(
-            Icons.Outlined.Settings,
-            contentDescription = "Settings",
-            tint = OnSurfaceVariant,
-            modifier = Modifier.size(24.dp),
+            Icons.Default.EnergySavingsLeaf,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(28.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            "Solar Pulse",
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onSurface,
         )
     }
 }
@@ -369,119 +351,6 @@ private fun StatCard(
             Text(label, style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
         }
     }
-}
-
-// ------------------------------------------------------------------
-// Battery Status Card
-// ------------------------------------------------------------------
-
-@Composable
-private fun BatteryCard(state: DashboardState, onControlClick: () -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(24.dp),
-        color = SurfaceContainer,
-        shadowElevation = 8.dp,
-    ) {
-        Column(Modifier.padding(20.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
-                // Circular gauge
-                Box(modifier = Modifier.size(120.dp), contentAlignment = Alignment.Center) {
-                    val soc = (state.batterySoc / 100f).toFloat()
-                    val gaugeColor = MaterialTheme.colorScheme.secondary
-                    val trackColor = SurfaceContainerHigh
-                    Canvas(Modifier.fillMaxSize()) {
-                        drawArc(trackColor, 0f, 360f, false, style = Stroke(width = 10.dp.toPx(), cap = StrokeCap.Round))
-                        drawArc(gaugeColor, -90f, 360f * soc, false, style = Stroke(width = 10.dp.toPx(), cap = StrokeCap.Round))
-                    }
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            "%.0f%%".format(state.batterySoc),
-                            style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.ExtraBold),
-                        )
-                        Text("SOC", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
-                    }
-                }
-
-                Spacer(Modifier.width(20.dp))
-
-                // Stats
-                Column(Modifier.weight(1f)) {
-                    // Status
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text("Status", style = MaterialTheme.typography.bodySmall, color = OnSurfaceVariant)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                Modifier
-                                    .size(8.dp)
-                                    .background(MaterialTheme.colorScheme.primary, CircleShape)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(state.batteryStatus, style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold), color = MaterialTheme.colorScheme.primary)
-                        }
-                    }
-                    HorizontalDivider(color = OutlineVariant.copy(alpha = 0.3f))
-                    Spacer(Modifier.height(10.dp))
-
-                    // Grid of stats
-                    Row(Modifier.fillMaxWidth()) {
-                        Column(Modifier.weight(1f)) {
-                            StatLabel("CAPACITY")
-                            StatValue("%.1f kWh".format(state.batteryCapacity))
-                            Spacer(Modifier.height(10.dp))
-                            StatLabel("CHARGED")
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.North, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(12.dp))
-                                StatValue("%.2f kWh".format(state.chargedTodayKwh))
-                            }
-                        }
-                        Column(Modifier.weight(1f)) {
-                            StatLabel("CURRENT")
-                            StatValue("%.3f kW".format(state.batteryPowerKw))
-                            Spacer(Modifier.height(10.dp))
-                            StatLabel("DISCHARGED")
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.South, null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(12.dp))
-                                StatValue("%.2f kWh".format(state.dischargedTodayKwh))
-                            }
-                        }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(20.dp))
-
-            // Battery Control button
-            Button(
-                onClick = onControlClick,
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-                shape = RoundedCornerShape(50),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = SolarGreenContainer,
-                    contentColor = Color.White,
-                ),
-            ) {
-                Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Battery Control", style = MaterialTheme.typography.labelLarge)
-            }
-        }
-    }
-}
-
-@Composable
-private fun StatLabel(text: String) {
-    Text(text, style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
-}
-
-@Composable
-private fun StatValue(text: String) {
-    Text(text, style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold))
 }
 
 // ------------------------------------------------------------------

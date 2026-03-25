@@ -130,23 +130,6 @@ class SolarSession:
         r.raise_for_status()
         return r.json()
 
-    async def get_config_signals(self, device_dn: str):
-        """GET config signals for a device (all configurable parameters)."""
-        async with self._lock:
-            client = await self._get_or_create_client()
-            return await asyncio.to_thread(
-                self._get_config_signals_sync, client, device_dn
-            )
-
-    def _get_config_signals_sync(self, client: FusionSolarClient, device_dn: str):
-        url = (
-            f"https://{self._subdomain}.fusionsolar.huawei.com"
-            "/rest/pvms/web/device/v1/deviceExt/get-config-signals"
-        )
-        r = client._session.get(url, params={"dn": device_dn, "_": round(time.time() * 1000)})
-        r.raise_for_status()
-        return r.json()
-
     async def keep_alive(self):
         """Keep the FusionSolar session alive and persist cookies."""
         async with self._lock:
