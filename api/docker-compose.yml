@@ -1,0 +1,18 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pv-solar-api:latest
+    container_name: pv-solar-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - pv-cookies:/data
+    stop_grace_period: 10s
+
+volumes:
+  pv-cookies:
