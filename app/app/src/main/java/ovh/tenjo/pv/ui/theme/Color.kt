@@ -21,10 +21,10 @@ val OnGridBlue = Color(0xFF002442)
 // Surfaces
 val SurfaceDark = Color(0xFF0E0E0E)
 val SurfaceContainerLowest = Color(0xFF000000)
-val SurfaceContainerLow = Color(0xFF131313)
-val SurfaceContainer = Color(0xFF1A1A1A)
-val SurfaceContainerHigh = Color(0xFF20201F)
-val SurfaceContainerHighest = Color(0xFF262626)
+val SurfaceContainerLow = Color(0xFF1E1E1E)
+val SurfaceContainer = Color(0xFF262626)
+val SurfaceContainerHigh = Color(0xFF2E2E2E)
+val SurfaceContainerHighest = Color(0xFF363636)
 val SurfaceBright = Color(0xFF2C2C2C)
 
 // On Surface

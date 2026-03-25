@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -46,7 +47,7 @@ fun DashboardScreen(viewModel: SolarViewModel, modifier: Modifier = Modifier) {
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
-                .padding(top = 24.dp, bottom = 100.dp),
+                .padding(top = 24.dp, bottom = 16.dp),
         ) {
             if (state.isLoading) {
                 Box(Modifier.fillMaxWidth().height(300.dp), contentAlignment = Alignment.Center) {
@@ -58,12 +59,12 @@ fun DashboardScreen(viewModel: SolarViewModel, modifier: Modifier = Modifier) {
                 // -- Energy Flow --
                 EnergyFlowSection(state)
 
-                Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(32.dp))
 
                 // -- Today Stats --
                 StatsRow(state)
 
-                Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.weight(1f))
 
                 // -- Auto-discharge --
                 AutoDischargeCard(adState, viewModel)
@@ -80,12 +81,13 @@ fun DashboardScreen(viewModel: SolarViewModel, modifier: Modifier = Modifier) {
 private fun EnergyFlowSection(state: DashboardState) {
     val infiniteTransition = rememberInfiniteTransition(label = "flow")
 
-    // Three staggered particles per path — slower with wider spacing
+    // Four staggered particles per path
     val duration = 3500
-    val spacing = duration / 3
+    val spacing = duration / 4
     val p1 by infiniteTransition.animateFloat(0f, 1f, infiniteRepeatable(tween(duration, easing = LinearEasing)), label = "p1")
     val p2 by infiniteTransition.animateFloat(0f, 1f, infiniteRepeatable(tween(duration, easing = LinearEasing), initialStartOffset = StartOffset(spacing)), label = "p2")
     val p3 by infiniteTransition.animateFloat(0f, 1f, infiniteRepeatable(tween(duration, easing = LinearEasing), initialStartOffset = StartOffset(spacing * 2)), label = "p3")
+    val p4 by infiniteTransition.animateFloat(0f, 1f, infiniteRepeatable(tween(duration, easing = LinearEasing), initialStartOffset = StartOffset(spacing * 3)), label = "p4")
 
     // Glow pulse
     val glowAlpha by infiniteTransition.animateFloat(
@@ -110,7 +112,7 @@ private fun EnergyFlowSection(state: DashboardState) {
             Canvas(Modifier.fillMaxSize()) {
                 val cx = size.width / 2
                 val cy = size.height / 2
-                val nodeOffset = size.width * 0.18f
+                val nodeOffset = size.width * 0.14f
 
                 val topY = size.height * 0.15f + nodeOffset
                 val bottomY = size.height * 0.85f - nodeOffset
@@ -131,22 +133,49 @@ private fun EnergyFlowSection(state: DashboardState) {
                     }
                 }
 
-                // Helper to draw a stream of 3 glowing particles along a path
+                // Helper to draw a triangle pointing in the flow direction
+                fun drawTriangle(pos: Offset, dirX: Float, dirY: Float, size: Float, color: Color) {
+                    val len = kotlin.math.sqrt(dirX * dirX + dirY * dirY)
+                    if (len == 0f) return
+                    val dx = dirX / len
+                    val dy = dirY / len
+                    // Perpendicular
+                    val px = -dy
+                    val py = dx
+                    val half = size * 0.55f
+                    val path = Path().apply {
+                        moveTo(pos.x + dx * size, pos.y + dy * size)       // Tip
+                        lineTo(pos.x - dx * half + px * half, pos.y - dy * half + py * half)
+                        lineTo(pos.x - dx * half - px * half, pos.y - dy * half - py * half)
+                        close()
+                    }
+                    drawPath(path, color)
+                }
+
+                // Helper to draw a stream of 3 directional triangle particles along a path
                 fun drawParticleStream(
                     from: Offset, to: Offset, color: Color,
-                    prog1: Float, prog2: Float, prog3: Float,
+                    prog1: Float, prog2: Float, prog3: Float, prog4: Float,
                 ) {
-                    listOf(prog1, prog2, prog3).forEach { t ->
+                    val dirX = to.x - from.x
+                    val dirY = to.y - from.y
+                    listOf(prog1, prog2, prog3, prog4).forEach { t ->
+                        // Fade in over first 15%, fade out over last 15%
+                        val fade = when {
+                            t < 0.15f -> t / 0.15f
+                            t > 0.85f -> (1f - t) / 0.15f
+                            else -> 1f
+                        }
                         val pos = Offset(
-                            from.x + (to.x - from.x) * t,
-                            from.y + (to.y - from.y) * t,
+                            from.x + dirX * t,
+                            from.y + dirY * t,
                         )
                         // Outer glow
-                        drawCircle(color.copy(alpha = glowAlpha * 0.5f), glowR, pos)
-                        // Bright core
-                        drawCircle(color, dotR, pos)
-                        // Hot center
-                        drawCircle(Color.White.copy(alpha = 0.6f), dotR * 0.45f, pos)
+                        drawCircle(color.copy(alpha = glowAlpha * 0.4f * fade), glowR, pos)
+                        // Triangle pointing in flow direction
+                        drawTriangle(pos, dirX, dirY, dotR * 1.4f, color.copy(alpha = fade))
+                        // Bright center dot
+                        drawTriangle(pos, dirX, dirY, dotR * 0.6f, Color.White.copy(alpha = 0.5f * fade))
                     }
                 }
 
@@ -169,29 +198,29 @@ private fun EnergyFlowSection(state: DashboardState) {
 
                 // PV particles (top → center)
                 if (pvActive) {
-                    drawParticleStream(topPt, center, primaryColor, p1, p2, p3)
+                    drawParticleStream(topPt, center, primaryColor, p1, p2, p3, p4)
                 }
 
                 // Battery particles
                 if (battActive) {
                     if (state.batteryCharging) {
-                        drawParticleStream(center, leftPt, secondaryColor, p1, p2, p3)
+                        drawParticleStream(center, leftPt, secondaryColor, p1, p2, p3, p4)
                     } else {
-                        drawParticleStream(leftPt, center, secondaryColor, p1, p2, p3)
+                        drawParticleStream(leftPt, center, secondaryColor, p1, p2, p3, p4)
                     }
                 }
 
                 // Home particles (center → right)
                 if (homeActive) {
-                    drawParticleStream(center, rightPt, homeColor, p1, p2, p3)
+                    drawParticleStream(center, rightPt, homeColor, p1, p2, p3, p4)
                 }
 
                 // Grid particles
                 if (gridActive) {
                     if (state.gridImporting) {
-                        drawParticleStream(bottomPt, center, tertiaryColor, p1, p2, p3)
+                        drawParticleStream(bottomPt, center, tertiaryColor, p1, p2, p3, p4)
                     } else {
-                        drawParticleStream(center, bottomPt, tertiaryColor, p1, p2, p3)
+                        drawParticleStream(center, bottomPt, tertiaryColor, p1, p2, p3, p4)
                     }
                 }
             }
