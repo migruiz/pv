@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -29,6 +30,7 @@ import ovh.tenjo.pv.DashboardState
 import ovh.tenjo.pv.SolarViewModel
 import ovh.tenjo.pv.ui.theme.*
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
     viewModel: SolarViewModel,
@@ -36,38 +38,45 @@ fun DashboardScreen(
 ) {
     val state by viewModel.dashboard.collectAsState()
 
-    Column(
+    PullToRefreshBox(
+        isRefreshing = state.isRefreshing,
+        onRefresh = { viewModel.pullToRefresh() },
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surface)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp)
-            .padding(top = 24.dp, bottom = 100.dp),
+            .background(MaterialTheme.colorScheme.surface),
     ) {
-        // -- Top Bar --
-        TopBar()
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(top = 24.dp, bottom = 100.dp),
+        ) {
+            // -- Top Bar --
+            TopBar()
 
-        Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(24.dp))
 
-        if (state.isLoading) {
-            Box(Modifier.fillMaxWidth().height(300.dp), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+            if (state.isLoading) {
+                Box(Modifier.fillMaxWidth().height(300.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                }
+            } else if (state.error != null) {
+                ErrorCard(state.error!!) { viewModel.refreshDashboard() }
+            } else {
+                // -- Energy Flow --
+                EnergyFlowSection(state)
+
+                Spacer(Modifier.height(28.dp))
+
+                // -- Today Stats --
+                StatsRow(state)
+
+                Spacer(Modifier.height(20.dp))
+
+                // -- Battery Card --
+                BatteryCard(state, onBatteryControlClick)
             }
-        } else if (state.error != null) {
-            ErrorCard(state.error!!) { viewModel.refreshDashboard() }
-        } else {
-            // -- Energy Flow --
-            EnergyFlowSection(state)
-
-            Spacer(Modifier.height(28.dp))
-
-            // -- Today Stats --
-            StatsRow(state)
-
-            Spacer(Modifier.height(20.dp))
-
-            // -- Battery Card --
-            BatteryCard(state, onBatteryControlClick)
         }
     }
 }

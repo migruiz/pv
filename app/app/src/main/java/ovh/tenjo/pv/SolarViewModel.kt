@@ -29,6 +29,7 @@ data class DashboardState(
     val consumedTodayKwh: Double = 0.0,
     val totalEnergyKwh: Double = 0.0,
     val isLoading: Boolean = true,
+    val isRefreshing: Boolean = false,
     val error: String? = null,
 )
 
@@ -67,8 +68,20 @@ class SolarViewModel : ViewModel() {
     }
 
     fun refreshDashboard() {
+        loadDashboard(showLoading = true)
+    }
+
+    fun pullToRefresh() {
+        loadDashboard(showLoading = false)
+    }
+
+    private fun loadDashboard(showLoading: Boolean) {
         viewModelScope.launch {
-            _dashboard.value = _dashboard.value.copy(isLoading = true, error = null)
+            _dashboard.value = _dashboard.value.copy(
+                isLoading = showLoading,
+                isRefreshing = !showLoading,
+                error = null,
+            )
             try {
                 val d = api.getDashboard()
 
@@ -99,6 +112,7 @@ class SolarViewModel : ViewModel() {
             } catch (e: Exception) {
                 _dashboard.value = _dashboard.value.copy(
                     isLoading = false,
+                    isRefreshing = false,
                     error = e.message ?: "Connection failed",
                 )
             }
