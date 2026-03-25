@@ -12,9 +12,8 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
-from config import KEEP_ALIVE_INTERVAL
+from config import KEEP_ALIVE_INTERVAL, MOCK_MODE, MOCK_URL
 from routers import auto_discharge, dashboard, health
-from session import SolarSession
 
 load_dotenv()
 
@@ -24,32 +23,47 @@ logger = logging.getLogger("pv.api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    session = SolarSession(
-        username=os.environ["FUSIONSOLAR_USER"],
-        password=os.environ["FUSIONSOLAR_PASS"],
-        subdomain=os.environ.get("HUAWEI_SUBDOMAIN", "uni003eu5"),
-    )
+    if MOCK_MODE:
+        from mock_session import MockSession
+
+        session = MockSession(mock_url=MOCK_URL)
+        logger.info("Running in MOCK mode, connecting to %s", MOCK_URL)
+    else:
+        from session import SolarSession
+
+        session = SolarSession(
+            username=os.environ["FUSIONSOLAR_USER"],
+            password=os.environ["FUSIONSOLAR_PASS"],
+            subdomain=os.environ.get("HUAWEI_SUBDOMAIN", "uni003eu5"),
+        )
+
     app.state.session = session
     app.state.auto_discharge_task = None
     app.state.auto_discharge_status = {"active": False}
 
-    try:
-        await session.call("get_power_status")
-        logger.info("FusionSolar session ready")
-    except Exception as exc:
-        logger.error("Initial connection failed: %s", exc)
+    if not MOCK_MODE:
+        try:
+            await session.call("get_power_status")
+            logger.info("FusionSolar session ready")
+        except Exception as exc:
+            logger.error("Initial connection failed: %s", exc)
 
-    async def _keep_alive_loop():
-        while True:
-            await asyncio.sleep(KEEP_ALIVE_INTERVAL)
-            await session.keep_alive()
-            logger.debug("Keep-alive sent")
+    keep_alive_task = None
+    if not MOCK_MODE:
+        async def _keep_alive_loop():
+            while True:
+                await asyncio.sleep(KEEP_ALIVE_INTERVAL)
+                await session.keep_alive()
+                logger.debug("Keep-alive sent")
 
-    keep_alive_task = asyncio.create_task(_keep_alive_loop())
+        keep_alive_task = asyncio.create_task(_keep_alive_loop())
+
     yield
+
     if app.state.auto_discharge_task and not app.state.auto_discharge_task.done():
         app.state.auto_discharge_task.cancel()
-    keep_alive_task.cancel()
+    if keep_alive_task:
+        keep_alive_task.cancel()
     await session.shutdown()
 
 
