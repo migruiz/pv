@@ -258,14 +258,14 @@ private fun EnergyFlowSection(state: DashboardState) {
                 color = MaterialTheme.colorScheme.primary,
                 valuePosition = ValuePosition.LEFT,
             )
-            // Battery — Left (show SOC + power + direction)
+            // Battery — Left (SOC above, kW below)
             val battDir = if (state.batteryCharging) "▲ charging" else "▼ discharging"
             EnergyNode(
                 modifier = Modifier.align(Alignment.CenterStart).padding(start = 4.dp),
                 icon = Icons.Default.BatteryChargingFull,
-                value = "%.0f".format(state.batterySoc),
-                unit = "%",
-                subtitle = "%.3f kW".format(state.batteryPowerKw),
+                value = "%.2f".format(state.batteryPowerKw),
+                unit = "kW",
+                topLabel = "%.0f%%".format(state.batterySoc),
                 label = if (state.batteryPowerKw > 0.005) battDir else "BATTERY",
                 color = MaterialTheme.colorScheme.secondary,
             )
@@ -302,10 +302,29 @@ private fun EnergyNode(
     value: String,
     unit: String? = null,
     subtitle: String? = null,
+    topLabel: String? = null,
     label: String,
     color: Color,
     valuePosition: ValuePosition = ValuePosition.BOTTOM,
 ) {
+    val topLabelBox = @Composable {
+        if (topLabel != null) {
+            Column(
+                modifier = Modifier.zeroLayoutHeight(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    topLabel,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = color,
+                    modifier = Modifier
+                        .zeroLayoutWidth()
+                        .offset(y = (-22).dp),
+                )
+            }
+        }
+    }
+
     val iconBox = @Composable {
         Box(
             modifier = Modifier
@@ -336,6 +355,7 @@ private fun EnergyNode(
             modifier = modifier,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            topLabelBox()
             iconBox()
             // Value/subtitle overflow below icon without affecting Column height
             Column(
