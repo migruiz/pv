@@ -19,6 +19,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -124,12 +125,10 @@ private fun EnergyFlowSection(state: DashboardState) {
             Canvas(Modifier.fillMaxSize()) {
                 val cx = size.width / 2
                 val cy = size.height / 2
-                val nodeOffset = size.width * 0.14f
-
-                val topY = size.height * 0.15f + nodeOffset
-                val bottomY = size.height * 0.85f - nodeOffset
-                val leftX = size.width * 0.15f + nodeOffset
-                val rightX = size.width * 0.85f - nodeOffset
+                val topY = size.height * 0.15f
+                val bottomY = size.height * 0.85f
+                val leftX = size.width * 0.15f
+                val rightX = size.width * 0.85f
 
                 val dotR = 4.dp.toPx()
                 val glowR = 12.dp.toPx()
@@ -254,6 +253,7 @@ private fun EnergyFlowSection(state: DashboardState) {
                 value = "%.2f kW".format(state.pvPowerKw),
                 label = "SOLAR PV",
                 color = MaterialTheme.colorScheme.primary,
+                valueOnTop = true,
             )
             // Battery — Left (show SOC + power + direction)
             val battDir = if (state.batteryCharging) "▲ charging" else "▼ discharging"
@@ -273,7 +273,7 @@ private fun EnergyFlowSection(state: DashboardState) {
                 label = "HOME",
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            // Grid — Bottom (show power + direction)
+            // Grid — Bottom
             val gridDir = if (state.gridImporting) "↓ import" else "↑ export"
             EnergyNode(
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp),
@@ -294,11 +294,20 @@ private fun EnergyNode(
     subtitle: String? = null,
     label: String,
     color: Color,
+    valueOnTop: Boolean = false,
 ) {
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        if (valueOnTop) {
+            Text(
+                value,
+                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
+                color = color,
+            )
+            Spacer(Modifier.height(6.dp))
+        }
         Box(
             modifier = Modifier
                 .size(56.dp)
@@ -307,12 +316,14 @@ private fun EnergyNode(
         ) {
             Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(30.dp))
         }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            value,
-            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
-            color = color,
-        )
+        if (!valueOnTop) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                value,
+                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
+                color = color,
+            )
+        }
         if (subtitle != null) {
             Text(
                 subtitle,
