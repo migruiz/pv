@@ -95,7 +95,7 @@ private fun EnergyFlowSection(state: DashboardState) {
 
     // Speed scales linearly with power: 3 kW → 1×, 6 kW → 2×, 1.5 kW → 0.5×
     // Clamped to [0.35, 3.5] → duration range ~1000ms–10000ms
-    fun speedMult(kw: Double): Float = (kw / 3.0).toFloat().coerceIn(0.35f, 3.5f)
+    fun speedMult(kw: Double): Float = (kw / 3.0).toFloat().coerceIn(0.033f, 3.5f)
     fun particleProg(mult: Float, idx: Int): Float {
         val period = 3500f / mult
         return ((animTimeMs % period) / period + idx * 0.25f) % 1.0f
