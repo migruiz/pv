@@ -14,6 +14,7 @@ def _parse_flow(flow_data: dict) -> dict:
     """Extract key power values from the FusionSolar plant flow response."""
     pv_kw = 0.0
     battery_soc = 0.0
+    battery_kw = 0.0
     grid_kw = 0.0
     home_kw = 0.0
 
@@ -29,6 +30,8 @@ def _parse_flow(flow_data: dict) -> dict:
         if moc_id == 20812 and value is not None:   # PV / String
             pv_kw = float(value)
         elif moc_id == 20815:                        # Battery / Energy Store
+            if value is not None:
+                battery_kw = float(value)
             if "SOC" in tips:
                 battery_soc = float(tips["SOC"])
         elif moc_id == 90002 and value is not None:  # Home / Electrical Load
@@ -72,6 +75,7 @@ def _parse_flow(flow_data: dict) -> dict:
     return {
         "pv_kw": pv_kw,
         "battery_soc": battery_soc,
+        "battery_kw": battery_kw,
         "grid_kw": grid_kw,
         "home_kw": home_kw,
         "grid_importing": grid_importing,
@@ -97,7 +101,7 @@ async def get_dashboard(session: SolarSession = Depends(get_session)):
         return {
             "pv_kw": flow_values.get("pv_kw", ps.current_power_kw),
             "battery_soc": flow_values.get("battery_soc", b.state_of_charge),
-            "battery_charge_discharge_kw": b.current_charge_discharge_kw,
+            "battery_charge_discharge_kw": flow_values.get("battery_kw", b.current_charge_discharge_kw),
             "battery_charging": flow_values.get("battery_charging", False),
             "grid_kw": flow_values.get("grid_kw", 0.0),
             "grid_importing": flow_values.get("grid_importing", False),
