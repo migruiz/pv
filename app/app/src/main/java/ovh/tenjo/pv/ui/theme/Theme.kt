@@ -10,13 +10,13 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
 private val SolarDarkColorScheme = darkColorScheme(
-    primary = SolarGreen,
-    onPrimary = OnSolarGreen,
-    primaryContainer = SolarGreenContainer,
-    onPrimaryContainer = OnSolarGreenContainer,
-    secondary = EnergyOrange,
-    onSecondary = OnEnergyOrange,
-    secondaryContainer = EnergyOrangeContainer,
+    primary = SolarYellow,
+    onPrimary = OnSolarYellow,
+    primaryContainer = SolarYellowContainer,
+    onPrimaryContainer = OnSolarYellowContainer,
+    secondary = BatteryGreen,
+    onSecondary = OnBatteryGreen,
+    secondaryContainer = BatteryGreenContainer,
     tertiary = GridBlue,
     onTertiary = OnGridBlue,
     tertiaryContainer = GridBlueContainer,

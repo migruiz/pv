@@ -2,16 +2,19 @@ package ovh.tenjo.pv.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Primary — Green (Solar/PV)
-val SolarGreen = Color(0xFF91F78E)
-val SolarGreenContainer = Color(0xFF52B555)
-val OnSolarGreen = Color(0xFF005E17)
-val OnSolarGreenContainer = Color(0xFF002A06)
+// Primary — Yellow (Solar/PV)
+val SolarYellow = Color(0xFFFFD54F)
+val SolarYellowContainer = Color(0xFFC9A020)
+val OnSolarYellow = Color(0xFF3E2E00)
+val OnSolarYellowContainer = Color(0xFF261C00)
 
-// Secondary — Orange (Battery/Discharge)
+// Secondary — Green (Battery)
+val BatteryGreen = Color(0xFF91F78E)
+val BatteryGreenContainer = Color(0xFF52B555)
+val OnBatteryGreen = Color(0xFF005E17)
+
+// Accent — Orange (auto-discharge button)
 val EnergyOrange = Color(0xFFFF9800)
-val EnergyOrangeContainer = Color(0xFF8B5000)
-val OnEnergyOrange = Color(0xFF4A2800)
 
 // Tertiary — Blue (Grid)
 val GridBlue = Color(0xFF44A5FF)
@@ -40,4 +43,4 @@ val ErrorRed = Color(0xFFFF7351)
 val ErrorContainer = Color(0xFFB92902)
 
 // Accent used in buttons/sliders
-val PrimaryAccent = Color(0xFF4CAF50)
+val PrimaryAccent = Color(0xFFC9A020)

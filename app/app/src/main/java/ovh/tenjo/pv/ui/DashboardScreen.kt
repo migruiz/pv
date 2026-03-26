@@ -26,7 +26,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import ovh.tenjo.pv.AutoDischargeState
 import ovh.tenjo.pv.DashboardState
@@ -127,8 +129,8 @@ private fun EnergyFlowSection(state: DashboardState) {
                 val cy = size.height / 2
                 val topY = size.height * 0.15f
                 val bottomY = size.height * 0.85f
-                val leftX = size.width * 0.15f
-                val rightX = size.width * 0.85f
+                val leftX = 32.dp.toPx()                  // center of battery icon (4dp pad + 28dp half)
+                val rightX = size.width - 32.dp.toPx()    // center of home icon
 
                 val dotR = 4.dp.toPx()
                 val glowR = 12.dp.toPx()
@@ -250,17 +252,19 @@ private fun EnergyFlowSection(state: DashboardState) {
             EnergyNode(
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 4.dp),
                 icon = Icons.Default.WbSunny,
-                value = "%.2f kW".format(state.pvPowerKw),
+                value = "%.2f".format(state.pvPowerKw),
+                unit = "kW",
                 label = "SOLAR PV",
                 color = MaterialTheme.colorScheme.primary,
-                valueOnTop = true,
+                valuePosition = ValuePosition.LEFT,
             )
             // Battery — Left (show SOC + power + direction)
             val battDir = if (state.batteryCharging) "▲ charging" else "▼ discharging"
             EnergyNode(
                 modifier = Modifier.align(Alignment.CenterStart).padding(start = 4.dp),
                 icon = Icons.Default.BatteryChargingFull,
-                value = "%.0f%%".format(state.batterySoc),
+                value = "%.0f".format(state.batterySoc),
+                unit = "%",
                 subtitle = "%.3f kW".format(state.batteryPowerKw),
                 label = if (state.batteryPowerKw > 0.005) battDir else "BATTERY",
                 color = MaterialTheme.colorScheme.secondary,
@@ -269,7 +273,8 @@ private fun EnergyFlowSection(state: DashboardState) {
             EnergyNode(
                 modifier = Modifier.align(Alignment.CenterEnd).padding(end = 4.dp),
                 icon = Icons.Default.Home,
-                value = "%.2f kW".format(state.homePowerKw),
+                value = "%.2f".format(state.homePowerKw),
+                unit = "kW",
                 label = "HOME",
                 color = MaterialTheme.colorScheme.onSurface,
             )
@@ -278,36 +283,30 @@ private fun EnergyFlowSection(state: DashboardState) {
             EnergyNode(
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp),
                 icon = Icons.Default.Bolt,
-                value = "%.2f kW".format(state.gridPowerKw),
+                value = "%.2f".format(state.gridPowerKw),
+                unit = "kW",
                 label = if (state.gridPowerKw > 0.01) gridDir else "GRID",
                 color = GridBlue,
+                valuePosition = ValuePosition.RIGHT,
             )
         }
     }
 }
+
+private enum class ValuePosition { BOTTOM, LEFT, RIGHT }
 
 @Composable
 private fun EnergyNode(
     modifier: Modifier = Modifier,
     icon: ImageVector,
     value: String,
+    unit: String? = null,
     subtitle: String? = null,
     label: String,
     color: Color,
-    valueOnTop: Boolean = false,
+    valuePosition: ValuePosition = ValuePosition.BOTTOM,
 ) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        if (valueOnTop) {
-            Text(
-                value,
-                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
-                color = color,
-            )
-            Spacer(Modifier.height(6.dp))
-        }
+    val iconBox = @Composable {
         Box(
             modifier = Modifier
                 .size(56.dp)
@@ -316,21 +315,97 @@ private fun EnergyNode(
         ) {
             Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(30.dp))
         }
-        if (!valueOnTop) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                value,
-                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
-                color = color,
-            )
+    }
+
+    when (valuePosition) {
+        ValuePosition.LEFT -> Row(
+            modifier = modifier,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ValueWithUnit(value, unit, color, Modifier.zeroWidthLeft(8.dp))
+            iconBox()
         }
-        if (subtitle != null) {
+        ValuePosition.RIGHT -> Row(
+            modifier = modifier,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            iconBox()
+            ValueWithUnit(value, unit, color, Modifier.zeroWidthRight(8.dp))
+        }
+        ValuePosition.BOTTOM -> Column(
+            modifier = modifier,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            iconBox()
+            // Value/subtitle overflow below icon without affecting Column height
+            Column(
+                modifier = Modifier.zeroLayoutHeight(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Spacer(Modifier.height(6.dp))
+                ValueWithUnit(value, unit, color, Modifier.zeroLayoutWidth())
+                if (subtitle != null) {
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = color.copy(alpha = 0.7f),
+                        modifier = Modifier.zeroLayoutWidth(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ValueWithUnit(value: String, unit: String?, color: Color, modifier: Modifier = Modifier) {
+    Row(modifier = modifier, verticalAlignment = Alignment.Bottom) {
+        Text(
+            value,
+            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.ExtraBold),
+            color = color,
+        )
+        if (unit != null) {
+            Spacer(Modifier.width(3.dp))
             Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
+                unit,
+                style = MaterialTheme.typography.labelSmall,
                 color = color.copy(alpha = 0.7f),
+                modifier = Modifier.padding(bottom = 4.dp),
             )
         }
+    }
+}
+
+/** Render below but report zero height so parent Column stays icon-height. */
+private fun Modifier.zeroLayoutHeight() = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    layout(placeable.width, 0) {
+        placeable.place(0, 0)
+    }
+}
+
+/** Render centered but report zero width so parent Column stays icon-width. */
+private fun Modifier.zeroLayoutWidth() = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    layout(0, placeable.height) {
+        placeable.place(-placeable.width / 2, 0)
+    }
+}
+
+/** Render to the left of this position but take zero layout width. */
+private fun Modifier.zeroWidthLeft(gap: Dp) = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    layout(0, placeable.height) {
+        placeable.place(-(placeable.width + gap.roundToPx()), 0)
+    }
+}
+
+/** Render to the right of this position but take zero layout width. */
+private fun Modifier.zeroWidthRight(gap: Dp) = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    layout(0, placeable.height) {
+        placeable.place(gap.roundToPx(), 0)
     }
 }
 
