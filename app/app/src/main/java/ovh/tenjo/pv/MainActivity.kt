@@ -29,9 +29,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Local API via ADB reverse (adb reverse tcp:8000 tcp:8000)
-        SolarApiClient.baseUrl = "http://localhost:8000/"
-        SolarApiClient.apiKey = "test"
+        // API config injected from local.properties via BuildConfig
+        SolarApiClient.baseUrl = BuildConfig.PV_API_URL
+        SolarApiClient.apiKey = BuildConfig.PV_API_KEY
 
         // Request notification permission (Android 13+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&

@@ -79,6 +79,9 @@ All endpoints except `/health` and `/docs` require `X-API-Key` header.
 | POST | `/batteries/{id}/forced-charge` | Force charge/discharge/stop |
 | POST | `/batteries/{id}/operation-mode` | Change TOU/self-consumption mode |
 | POST | `/batteries/{id}/params` | Update SOC limits, charge power limits |
+| POST | `/batteries/{id}/auto-discharge` | Start auto-discharge to reach 0% by 2 AM |
+| POST | `/batteries/{id}/auto-discharge/stop` | Cancel auto-discharge |
+| GET | `/batteries/{id}/auto-discharge/status` | Auto-discharge process state |
 
 ## FusionSolar Signal IDs
 
@@ -155,3 +158,4 @@ adb shell am start -n ovh.tenjo.pv/.MainActivity
 - **Keep-alive loop** runs every 120 seconds mimicking the web browser to maintain the session
 - **Cookie persistence** via symlink (`/app/cookies.json` → `/data/cookies.json`) so the Docker volume stores session state without modifying application code
 - **Grid direction**: FusionSolar's "buy.power" label means the grid buys from you (exporting), not that you're buying from the grid
+- **Auto-discharge** uses a self-correcting background loop (every 5 min) to force-discharge the battery to 0% by exactly 2:00 AM Dublin time, maximizing export revenue. Configurable constants: `BATTERY_REAL_CAPACITY_KWH` (usable capacity, default 4.8), `MAX_DISCHARGE_POWER_KW` (2.5), `MIN_SOC_TO_START` (5%), correction interval (300s). State stored in `app.state`, not persistent across restarts
