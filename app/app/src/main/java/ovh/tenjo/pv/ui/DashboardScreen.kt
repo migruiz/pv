@@ -15,6 +15,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -81,13 +84,22 @@ fun DashboardScreen(viewModel: SolarViewModel, modifier: Modifier = Modifier) {
 private fun EnergyFlowSection(state: DashboardState) {
     val infiniteTransition = rememberInfiniteTransition(label = "flow")
 
-    // Four staggered particles per path
-    val duration = 3500
-    val spacing = duration / 4
-    val p1 by infiniteTransition.animateFloat(0f, 1f, infiniteRepeatable(tween(duration, easing = LinearEasing)), label = "p1")
-    val p2 by infiniteTransition.animateFloat(0f, 1f, infiniteRepeatable(tween(duration, easing = LinearEasing), initialStartOffset = StartOffset(spacing)), label = "p2")
-    val p3 by infiniteTransition.animateFloat(0f, 1f, infiniteRepeatable(tween(duration, easing = LinearEasing), initialStartOffset = StartOffset(spacing * 2)), label = "p3")
-    val p4 by infiniteTransition.animateFloat(0f, 1f, infiniteRepeatable(tween(duration, easing = LinearEasing), initialStartOffset = StartOffset(spacing * 3)), label = "p4")
+    // Elapsed animation time — increases monotonically, no global wrap
+    var animTimeMs by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(Unit) {
+        val startNanos = withInfiniteAnimationFrameNanos { it }
+        while (true) {
+            withInfiniteAnimationFrameNanos { now -> animTimeMs = (now - startNanos) / 1_000_000f }
+        }
+    }
+
+    // Speed scales linearly with power: 3 kW → 1×, 6 kW → 2×, 1.5 kW → 0.5×
+    // Clamped to [0.35, 3.5] → duration range ~1000ms–10000ms
+    fun speedMult(kw: Double): Float = (kw / 3.0).toFloat().coerceIn(0.35f, 3.5f)
+    fun particleProg(mult: Float, idx: Int): Float {
+        val period = 3500f / mult
+        return ((animTimeMs % period) / period + idx * 0.25f) % 1.0f
+    }
 
     // Glow pulse
     val glowAlpha by infiniteTransition.animateFloat(
@@ -198,29 +210,39 @@ private fun EnergyFlowSection(state: DashboardState) {
 
                 // PV particles (top → center)
                 if (pvActive) {
-                    drawParticleStream(topPt, center, primaryColor, p1, p2, p3, p4)
+                    val m = speedMult(state.pvPowerKw)
+                    drawParticleStream(topPt, center, primaryColor,
+                        particleProg(m, 0), particleProg(m, 1), particleProg(m, 2), particleProg(m, 3))
                 }
 
                 // Battery particles
                 if (battActive) {
+                    val m = speedMult(state.batteryPowerKw)
                     if (state.batteryCharging) {
-                        drawParticleStream(center, leftPt, secondaryColor, p1, p2, p3, p4)
+                        drawParticleStream(center, leftPt, secondaryColor,
+                            particleProg(m, 0), particleProg(m, 1), particleProg(m, 2), particleProg(m, 3))
                     } else {
-                        drawParticleStream(leftPt, center, secondaryColor, p1, p2, p3, p4)
+                        drawParticleStream(leftPt, center, secondaryColor,
+                            particleProg(m, 0), particleProg(m, 1), particleProg(m, 2), particleProg(m, 3))
                     }
                 }
 
                 // Home particles (center → right)
                 if (homeActive) {
-                    drawParticleStream(center, rightPt, homeColor, p1, p2, p3, p4)
+                    val m = speedMult(state.homePowerKw)
+                    drawParticleStream(center, rightPt, homeColor,
+                        particleProg(m, 0), particleProg(m, 1), particleProg(m, 2), particleProg(m, 3))
                 }
 
                 // Grid particles
                 if (gridActive) {
+                    val m = speedMult(state.gridPowerKw)
                     if (state.gridImporting) {
-                        drawParticleStream(bottomPt, center, tertiaryColor, p1, p2, p3, p4)
+                        drawParticleStream(bottomPt, center, tertiaryColor,
+                            particleProg(m, 0), particleProg(m, 1), particleProg(m, 2), particleProg(m, 3))
                     } else {
-                        drawParticleStream(center, bottomPt, tertiaryColor, p1, p2, p3, p4)
+                        drawParticleStream(center, bottomPt, tertiaryColor,
+                            particleProg(m, 0), particleProg(m, 1), particleProg(m, 2), particleProg(m, 3))
                     }
                 }
             }
