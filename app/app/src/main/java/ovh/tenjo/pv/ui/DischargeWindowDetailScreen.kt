@@ -19,6 +19,8 @@ import ovh.tenjo.pv.SolarViewModel
 import ovh.tenjo.pv.WindowDetailState
 import ovh.tenjo.pv.api.DischargeWindowStatus
 import ovh.tenjo.pv.api.DischargeWindowUpdate
+import ovh.tenjo.pv.ui.theme.BatteryGreen
+import ovh.tenjo.pv.ui.theme.BatteryGreenContainer
 import ovh.tenjo.pv.ui.theme.EnergyOrange
 import ovh.tenjo.pv.ui.theme.OnSurfaceVariant
 import ovh.tenjo.pv.ui.theme.SurfaceContainer
@@ -97,6 +99,7 @@ fun DischargeWindowDetailScreen(
     var showStartPicker by remember { mutableStateOf(false) }
     var showEndPicker by remember { mutableStateOf(false) }
     var showDurationPicker by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -108,7 +111,7 @@ fun DischargeWindowDetailScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.deleteWindow(windowId) }) {
+                    IconButton(onClick = { showDeleteConfirm = true }) {
                         Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
                     }
                 },
@@ -237,6 +240,39 @@ fun DischargeWindowDetailScreen(
                 showDurationPicker = false
             },
             onDismiss = { showDurationPicker = false },
+        )
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            icon = {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            },
+            title = { Text("Delete Window?") },
+            text = { Text("This will permanently delete \"${window.name}\".") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirm = false
+                        viewModel.deleteWindow(windowId)
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("Cancel")
+                }
+            },
         )
     }
 }
@@ -430,16 +466,15 @@ private fun ControlSection(
     val isActive = status?.active == true
     val canStart = canStartWindow(startTime, durationMinutes)
 
+    var showConfirmDialog by remember { mutableStateOf(false) }
+
     Button(
-        onClick = {
-            if (isActive) viewModel.stopWindow(windowId)
-            else viewModel.startWindow(windowId)
-        },
+        onClick = { showConfirmDialog = true },
         modifier = Modifier.fillMaxWidth().height(44.dp),
         shape = RoundedCornerShape(50),
         enabled = (isActive || canStart) && !detailState.isStarting && !detailState.isStopping,
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (isActive) MaterialTheme.colorScheme.error else EnergyOrange,
+            containerColor = if (isActive) MaterialTheme.colorScheme.error else BatteryGreenContainer,
             contentColor = Color.White,
         ),
     ) {
@@ -461,5 +496,46 @@ private fun ControlSection(
                 style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
             )
         }
+    }
+
+    if (showConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showConfirmDialog = false },
+            icon = {
+                Icon(
+                    if (isActive) Icons.Default.StopCircle else Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    tint = if (isActive) MaterialTheme.colorScheme.error else BatteryGreen,
+                )
+            },
+            title = {
+                Text(if (isActive) "Stop Discharge?" else "Start Discharge?")
+            },
+            text = {
+                Text(
+                    if (isActive) "This will stop the current discharge session."
+                    else "This will start discharging the battery now.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showConfirmDialog = false
+                        if (isActive) viewModel.stopWindow(windowId)
+                        else viewModel.startWindow(windowId)
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = if (isActive) MaterialTheme.colorScheme.error else BatteryGreen,
+                    ),
+                ) {
+                    Text(if (isActive) "Stop" else "Start")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirmDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 }

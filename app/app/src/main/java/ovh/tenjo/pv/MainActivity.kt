@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -56,6 +57,10 @@ class MainActivity : ComponentActivity() {
                 var selectedWindowId by remember { mutableStateOf<String?>(null) }
                 var showCreateDialog by remember { mutableStateOf(false) }
 
+                BackHandler(enabled = selectedWindowId != null) {
+                    selectedWindowId = null
+                }
+
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     if (selectedWindowId != null) {
                         DischargeWindowDetailScreen(
@@ -67,7 +72,10 @@ class MainActivity : ComponentActivity() {
                         DashboardScreen(
                             viewModel = solarViewModel,
                             modifier = Modifier.padding(innerPadding),
-                            onWindowClick = { selectedWindowId = it },
+                            onWindowClick = {
+                            solarViewModel.clearDetailMessage()
+                            selectedWindowId = it
+                        },
                             onCreateWindow = { showCreateDialog = true },
                         )
                     }

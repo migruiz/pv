@@ -1,6 +1,7 @@
 package ovh.tenjo.pv.ui
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -526,7 +527,7 @@ private fun DischargeWindowsList(
             }
         }
 
-        state.windows.forEach { window ->
+        state.windows.sortedBy { parseTimeToMinutes(it.startTime) }.forEach { window ->
             val windowStatus = state.statuses[window.id]
             DischargeWindowCard(window, windowStatus, onWindowClick)
         }
@@ -542,10 +543,24 @@ private fun DischargeWindowCard(
     val isActive = status != null && status.active
     val alpha = if (window.enabled) 1f else 0.5f
 
+    val borderAlpha = if (isActive) {
+        val infiniteTransition = rememberInfiniteTransition(label = "active-border")
+        infiniteTransition.animateFloat(
+            initialValue = 0.3f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                tween(1200, easing = FastOutSlowInEasing),
+                RepeatMode.Reverse,
+            ),
+            label = "border-pulse",
+        ).value
+    } else 0f
+
     Surface(
         onClick = { onClick(window.id) },
         shape = RoundedCornerShape(12.dp),
         color = SurfaceContainer,
+        border = if (isActive) BorderStroke(1.5.dp, EnergyOrange.copy(alpha = borderAlpha)) else null,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(14.dp)) {
@@ -555,8 +570,9 @@ private fun DischargeWindowCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    val isMorning = parseTimeToMinutes(window.startTime) < 720
                     Icon(
-                        Icons.Default.NightsStay,
+                        if (isMorning) Icons.Default.WbSunny else Icons.Default.NightsStay,
                         contentDescription = null,
                         tint = (if (isActive) EnergyOrange else OnSurfaceVariant).copy(alpha = alpha),
                         modifier = Modifier.size(18.dp),
@@ -568,24 +584,43 @@ private fun DischargeWindowCard(
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
                     )
                 }
-                if (isActive) {
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = EnergyOrange.copy(alpha = 0.15f),
-                    ) {
-                        Text(
-                            "ACTIVE",
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = EnergyOrange,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (window.notify) {
+                        Icon(
+                            Icons.Default.Notifications,
+                            contentDescription = "Notifications enabled",
+                            tint = OnSurfaceVariant.copy(alpha = alpha),
+                            modifier = Modifier.size(14.dp),
                         )
                     }
-                } else if (!window.enabled) {
-                    Text(
-                        "DISABLED",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = OnSurfaceVariant.copy(alpha = 0.5f),
-                    )
+                    val statusColor = if (window.enabled) BatteryGreen else ErrorRed
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Canvas(modifier = Modifier.size(8.dp)) {
+                            drawCircle(color = statusColor)
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            if (window.enabled) "Enabled" else "Disabled",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = statusColor.copy(alpha = alpha),
+                        )
+                    }
+                    if (isActive) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = EnergyOrange.copy(alpha = 0.15f),
+                        ) {
+                            Text(
+                                "ACTIVE",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = EnergyOrange,
+                            )
+                        }
+                    }
                 }
             }
 
