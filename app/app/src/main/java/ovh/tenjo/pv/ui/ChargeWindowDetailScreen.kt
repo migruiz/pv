@@ -15,6 +15,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
@@ -210,10 +212,10 @@ fun ChargeWindowDetailScreen(
                     )
 
                     // Start time + power
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ReadOnlyTimeField("Start", startTime, { showStartPicker = true }, Modifier.weight(1f))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ReadOnlyTimeField("Start", startTime, { showStartPicker = true }, Modifier.width(90.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("Start: ${startPower}W", style = MaterialTheme.typography.bodyMedium)
+                            Text("${startPower}W", style = MaterialTheme.typography.bodyMedium)
                             Slider(
                                 value = startPower.toFloat(),
                                 onValueChange = { startPower = ((it / 100f).roundToInt() * 100).coerceIn(200, 2500) },
@@ -225,10 +227,10 @@ fun ChargeWindowDetailScreen(
                     }
 
                     // Peak time + power
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ReadOnlyTimeField("Peak", peakTime, { showPeakPicker = true }, Modifier.weight(1f))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ReadOnlyTimeField("Peak", peakTime, { showPeakPicker = true }, Modifier.width(90.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("Peak: ${peakPower}W", style = MaterialTheme.typography.bodyMedium)
+                            Text("${peakPower}W", style = MaterialTheme.typography.bodyMedium)
                             Slider(
                                 value = peakPower.toFloat(),
                                 onValueChange = { peakPower = ((it / 100f).roundToInt() * 100).coerceIn(200, 2500) },
@@ -240,10 +242,10 @@ fun ChargeWindowDetailScreen(
                     }
 
                     // End time + power
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ReadOnlyTimeField("End", endTime, { showEndPicker = true }, Modifier.weight(1f))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ReadOnlyTimeField("End", endTime, { showEndPicker = true }, Modifier.width(90.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("End: ${endPower}W", style = MaterialTheme.typography.bodyMedium)
+                            Text("${endPower}W", style = MaterialTheme.typography.bodyMedium)
                             Slider(
                                 value = endPower.toFloat(),
                                 onValueChange = { endPower = ((it / 100f).roundToInt() * 100).coerceIn(200, 2500) },
@@ -551,12 +553,12 @@ private fun AsymmetricBellCurvePreview(
             Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(100.dp),
+                    .height(130.dp),
             ) {
-                val padLeft = 40.dp.toPx()
-                val padRight = 8.dp.toPx()
+                val padLeft = 4.dp.toPx()
+                val padRight = 4.dp.toPx()
                 val padTop = 8.dp.toPx()
-                val padBottom = 20.dp.toPx()
+                val padBottom = 50.dp.toPx()
                 val w = size.width - padLeft - padRight
                 val h = size.height - padTop - padBottom
 
@@ -592,16 +594,48 @@ private fun AsymmetricBellCurvePreview(
                     if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
                 }
                 drawPath(path, curveColor, style = Stroke(width = 3.dp.toPx()))
-            }
 
-            // Labels
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text("$startTime ${startPower}W", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
-                Text("$peakTime ${peakPower}W", style = MaterialTheme.typography.labelSmall, color = EnergyOrange)
-                Text("$endTime ${endPower}W", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
+                // Labels drawn on canvas at exact curve x-positions
+                val labelSize = 11.dp.toPx()
+                val lineHeight = 14.dp.toPx()
+                val labelY = padTop + h + 8.dp.toPx()
+
+                val startX = padLeft
+                val peakX = padLeft + w * peakFraction
+                val endX = padLeft + w
+
+                val dimColor = OnSurfaceVariant.copy(alpha = 1f)
+                val accentColor = curveColor
+
+                // Start labels (left-aligned at curve start)
+                val startPaint = android.graphics.Paint().apply {
+                    color = dimColor.toArgb()
+                    textSize = labelSize
+                    textAlign = android.graphics.Paint.Align.LEFT
+                    isAntiAlias = true
+                }
+                drawContext.canvas.nativeCanvas.drawText(startTime, startX, labelY + labelSize, startPaint)
+                drawContext.canvas.nativeCanvas.drawText("${startPower}W", startX, labelY + labelSize + lineHeight, startPaint)
+
+                // Peak labels (centered at peak position)
+                val peakPaint = android.graphics.Paint().apply {
+                    color = accentColor.toArgb()
+                    textSize = labelSize
+                    textAlign = android.graphics.Paint.Align.CENTER
+                    isAntiAlias = true
+                }
+                drawContext.canvas.nativeCanvas.drawText(peakTime, peakX, labelY + labelSize, peakPaint)
+                drawContext.canvas.nativeCanvas.drawText("${peakPower}W", peakX, labelY + labelSize + lineHeight, peakPaint)
+
+                // End labels (right-aligned at curve end)
+                val endPaint = android.graphics.Paint().apply {
+                    color = dimColor.toArgb()
+                    textSize = labelSize
+                    textAlign = android.graphics.Paint.Align.RIGHT
+                    isAntiAlias = true
+                }
+                drawContext.canvas.nativeCanvas.drawText(endTime, endX, labelY + labelSize, endPaint)
+                drawContext.canvas.nativeCanvas.drawText("${endPower}W", endX, labelY + labelSize + lineHeight, endPaint)
             }
         }
     }
