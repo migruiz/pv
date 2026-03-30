@@ -60,26 +60,33 @@ def _send(data: dict[str, str]):
         logger.error("FCM send failed: %s", exc)
 
 
-def notify_discharge_started(soc: float, power_kw: float, minutes_remaining: float):
+def notify_discharge_started(
+    soc: float, power_kw: float, minutes_remaining: float, window_name: str | None = None,
+):
     _send({
         "type": "auto_discharge_active",
         "soc": f"{soc:.1f}",
         "power_kw": f"{power_kw:.3f}",
         "minutes_remaining": f"{minutes_remaining:.0f}",
+        "window_name": window_name or "",
     })
 
 
-def notify_discharge_update(soc: float, power_kw: float, minutes_remaining: float):
+def notify_discharge_update(
+    soc: float, power_kw: float, minutes_remaining: float, window_name: str | None = None,
+):
     _send({
         "type": "auto_discharge_update",
         "soc": f"{soc:.1f}",
         "power_kw": f"{power_kw:.3f}",
         "minutes_remaining": f"{minutes_remaining:.0f}",
+        "window_name": window_name or "",
     })
 
 
-def notify_discharge_stopped(reason: str):
+def notify_discharge_stopped(reason: str, window_name: str | None = None):
     _send({
         "type": "auto_discharge_stopped",
         "reason": reason,
+        "window_name": window_name or "",
     })

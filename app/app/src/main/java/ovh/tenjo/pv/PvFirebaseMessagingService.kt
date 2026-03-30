@@ -7,6 +7,7 @@ class PvFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
         val data = message.data
+        val windowName = data["window_name"] ?: ""
         when (data["type"]) {
             "auto_discharge_active" -> {
                 AutoDischargeService.start(
@@ -14,6 +15,7 @@ class PvFirebaseMessagingService : FirebaseMessagingService() {
                     power = data["power_kw"] ?: "?",
                     soc = data["soc"] ?: "?",
                     minutes = data["minutes_remaining"] ?: "0",
+                    windowName = windowName,
                     isUpdate = false,
                 )
             }
@@ -23,6 +25,7 @@ class PvFirebaseMessagingService : FirebaseMessagingService() {
                     power = data["power_kw"] ?: "?",
                     soc = data["soc"] ?: "?",
                     minutes = data["minutes_remaining"] ?: "0",
+                    windowName = windowName,
                     isUpdate = true,
                 )
             }

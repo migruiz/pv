@@ -12,11 +12,17 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.firebase.messaging.FirebaseMessaging
 import ovh.tenjo.pv.api.SolarApiClient
+import ovh.tenjo.pv.ui.CreateWindowDialog
 import ovh.tenjo.pv.ui.DashboardScreen
+import ovh.tenjo.pv.ui.DischargeWindowDetailScreen
 import ovh.tenjo.pv.ui.theme.PVManagerTheme
 
 class MainActivity : ComponentActivity() {
@@ -47,11 +53,31 @@ class MainActivity : ComponentActivity() {
         setContent {
             PVManagerTheme {
                 val solarViewModel: SolarViewModel = viewModel()
+                var selectedWindowId by remember { mutableStateOf<String?>(null) }
+                var showCreateDialog by remember { mutableStateOf(false) }
+
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    DashboardScreen(
-                        viewModel = solarViewModel,
-                        modifier = Modifier.padding(innerPadding),
-                    )
+                    if (selectedWindowId != null) {
+                        DischargeWindowDetailScreen(
+                            windowId = selectedWindowId!!,
+                            viewModel = solarViewModel,
+                            onBack = { selectedWindowId = null },
+                        )
+                    } else {
+                        DashboardScreen(
+                            viewModel = solarViewModel,
+                            modifier = Modifier.padding(innerPadding),
+                            onWindowClick = { selectedWindowId = it },
+                            onCreateWindow = { showCreateDialog = true },
+                        )
+                    }
+
+                    if (showCreateDialog) {
+                        CreateWindowDialog(
+                            viewModel = solarViewModel,
+                            onDismiss = { showCreateDialog = false },
+                        )
+                    }
                 }
             }
         }

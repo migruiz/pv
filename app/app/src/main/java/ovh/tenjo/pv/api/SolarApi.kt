@@ -6,7 +6,7 @@ import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.*
 
 // ------------------------------------------------------------------
-// Data models
+// Data models — Dashboard
 // ------------------------------------------------------------------
 
 data class DashboardData(
@@ -26,23 +26,63 @@ data class HealthResponse(
     val status: String,
 )
 
-data class AutoDischargeResponse(
-    val success: Boolean,
-    @SerializedName("initial_soc") val initialSoc: Double? = null,
-    @SerializedName("discharge_power_kw") val dischargePowerKw: Double? = null,
-    @SerializedName("target_time") val targetTime: String? = null,
-    val detail: String? = null,
+// ------------------------------------------------------------------
+// Data models — Discharge Windows
+// ------------------------------------------------------------------
+
+data class DischargeWindow(
+    val id: String,
+    val name: String,
+    @SerializedName("start_time") val startTime: String,
+    @SerializedName("duration_minutes") val durationMinutes: Int,
+    @SerializedName("target_soc") val targetSoc: Double,
+    val notify: Boolean,
+    val enabled: Boolean,
 )
 
-data class AutoDischargeStatus(
+data class DischargeWindowCreate(
+    val name: String,
+    @SerializedName("start_time") val startTime: String,
+    @SerializedName("duration_minutes") val durationMinutes: Int,
+    @SerializedName("target_soc") val targetSoc: Double,
+    val notify: Boolean = true,
+    val enabled: Boolean = true,
+)
+
+data class DischargeWindowUpdate(
+    val name: String? = null,
+    @SerializedName("start_time") val startTime: String? = null,
+    @SerializedName("duration_minutes") val durationMinutes: Int? = null,
+    @SerializedName("target_soc") val targetSoc: Double? = null,
+    val notify: Boolean? = null,
+    val enabled: Boolean? = null,
+)
+
+data class DischargeWindowStatus(
+    @SerializedName("window_id") val windowId: String,
+    @SerializedName("window_name") val windowName: String,
     val active: Boolean,
-    @SerializedName("battery_id") val batteryId: String? = null,
     @SerializedName("current_soc") val currentSoc: Double? = null,
     @SerializedName("discharge_power_kw") val dischargePowerKw: Double? = null,
     @SerializedName("target_time") val targetTime: String? = null,
     @SerializedName("minutes_remaining") val minutesRemaining: Double? = null,
     @SerializedName("hours_remaining") val hoursRemaining: Double? = null,
     @SerializedName("last_adjustment") val lastAdjustment: String? = null,
+)
+
+data class StartWindowResponse(
+    val success: Boolean,
+    @SerializedName("window_id") val windowId: String? = null,
+    @SerializedName("window_name") val windowName: String? = null,
+    @SerializedName("initial_soc") val initialSoc: Double? = null,
+    @SerializedName("discharge_power_kw") val dischargePowerKw: Double? = null,
+    @SerializedName("target_time") val targetTime: String? = null,
+    val detail: String? = null,
+)
+
+data class StopWindowResponse(
+    val success: Boolean,
+    val detail: String? = null,
 )
 
 // ------------------------------------------------------------------
@@ -57,14 +97,43 @@ interface SolarApiService {
     @GET("dashboard")
     suspend fun getDashboard(): DashboardData
 
-    @POST("batteries/{batteryId}/auto-discharge")
-    suspend fun startAutoDischarge(@Path("batteryId") batteryId: String): AutoDischargeResponse
+    // -- Discharge Windows CRUD --
 
+    @GET("discharge-windows")
+    suspend fun getDischargeWindows(): List<DischargeWindow>
+
+    @GET("discharge-windows/{windowId}")
+    suspend fun getDischargeWindow(@Path("windowId") windowId: String): DischargeWindow
+
+    @POST("discharge-windows")
+    suspend fun createDischargeWindow(@Body body: DischargeWindowCreate): DischargeWindow
+
+    @PUT("discharge-windows/{windowId}")
+    suspend fun updateDischargeWindow(
+        @Path("windowId") windowId: String,
+        @Body body: DischargeWindowUpdate,
+    ): DischargeWindow
+
+    @DELETE("discharge-windows/{windowId}")
+    suspend fun deleteDischargeWindow(@Path("windowId") windowId: String)
+
+    // -- Discharge Window Control --
+
+    @GET("discharge-windows/status")
+    suspend fun getWindowStatuses(): List<DischargeWindowStatus>
+
+    @GET("discharge-windows/{windowId}/status")
+    suspend fun getWindowStatus(@Path("windowId") windowId: String): DischargeWindowStatus
+
+    @POST("discharge-windows/{windowId}/start")
+    suspend fun startWindow(@Path("windowId") windowId: String): StartWindowResponse
+
+    @POST("discharge-windows/{windowId}/stop")
+    suspend fun stopWindow(@Path("windowId") windowId: String): StopWindowResponse
+
+    // Backward-compatible: stop all active windows
     @POST("batteries/{batteryId}/auto-discharge/stop")
-    suspend fun stopAutoDischarge(@Path("batteryId") batteryId: String): AutoDischargeResponse
-
-    @GET("batteries/{batteryId}/auto-discharge/status")
-    suspend fun getAutoDischargeStatus(@Path("batteryId") batteryId: String): AutoDischargeStatus
+    suspend fun stopAllDischarge(@Path("batteryId") batteryId: String): StopWindowResponse
 }
 
 // ------------------------------------------------------------------

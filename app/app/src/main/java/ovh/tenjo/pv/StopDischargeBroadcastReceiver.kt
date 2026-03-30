@@ -13,11 +13,11 @@ class StopDischargeBroadcastReceiver : BroadcastReceiver() {
         // Stop the foreground service immediately
         AutoDischargeService.stop(context)
 
-        // Call the API to stop discharge
+        // Call the backward-compatible API to stop all active windows
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                SolarApiClient.service.stopAutoDischarge(SolarApiClient.BATTERY_ID)
+                SolarApiClient.service.stopAllDischarge(SolarApiClient.BATTERY_ID)
             } catch (_: Exception) { }
             finally {
                 pendingResult.finish()

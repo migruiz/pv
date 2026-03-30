@@ -15,17 +15,27 @@ class AutoDischargeService : Service() {
         private const val EXTRA_POWER = "power_kw"
         private const val EXTRA_SOC = "soc"
         private const val EXTRA_MINUTES = "minutes_remaining"
+        private const val EXTRA_WINDOW_NAME = "window_name"
         private const val EXTRA_IS_UPDATE = "is_update"
 
-        fun start(context: Context, power: String, soc: String, minutes: String, isUpdate: Boolean = false) {
+        fun start(
+            context: Context,
+            power: String,
+            soc: String,
+            minutes: String,
+            windowName: String = "",
+            isUpdate: Boolean = false,
+        ) {
             NotificationDismissReceiver.lastPower = power
             NotificationDismissReceiver.lastSoc = soc
             NotificationDismissReceiver.lastMinutes = minutes
+            NotificationDismissReceiver.lastWindowName = windowName
             NotificationDismissReceiver.isActive = true
             val intent = Intent(context, AutoDischargeService::class.java).apply {
                 putExtra(EXTRA_POWER, power)
                 putExtra(EXTRA_SOC, soc)
                 putExtra(EXTRA_MINUTES, minutes)
+                putExtra(EXTRA_WINDOW_NAME, windowName)
                 putExtra(EXTRA_IS_UPDATE, isUpdate)
             }
             context.startForegroundService(intent)
@@ -45,11 +55,12 @@ class AutoDischargeService : Service() {
         val power = intent?.getStringExtra(EXTRA_POWER) ?: "?"
         val soc = intent?.getStringExtra(EXTRA_SOC) ?: "?"
         val mins = intent?.getStringExtra(EXTRA_MINUTES)?.toDoubleOrNull() ?: 0.0
+        val windowName = intent?.getStringExtra(EXTRA_WINDOW_NAME) ?: ""
         val isUpdate = intent?.getBooleanExtra(EXTRA_IS_UPDATE, false) ?: false
         val hours = (mins / 60).toInt()
         val m = (mins % 60).toInt()
 
-        val notification = buildNotification(power, soc, hours, m)
+        val notification = buildNotification(power, soc, hours, m, windowName)
 
         if (!started) {
             // First time — startForeground shows with sound
@@ -63,7 +74,7 @@ class AutoDischargeService : Service() {
         return START_STICKY
     }
 
-    private fun buildNotification(power: String, soc: String, hours: Int, mins: Int): android.app.Notification {
+    private fun buildNotification(power: String, soc: String, hours: Int, mins: Int, windowName: String = ""): android.app.Notification {
         val stopIntent = Intent(this, StopDischargeBroadcastReceiver::class.java)
         val stopPendingIntent = PendingIntent.getBroadcast(
             this, 0, stopIntent,
@@ -86,7 +97,7 @@ class AutoDischargeService : Service() {
 
         return NotificationCompat.Builder(this, PvApplication.CHANNEL_AUTO_DISCHARGE)
             .setSmallIcon(R.drawable.ic_battery_discharge)
-            .setContentTitle("Auto-Discharge Active")
+            .setContentTitle(if (windowName.isNotBlank()) "$windowName — Discharging" else "Auto-Discharge Active")
             .setContentText("${power} kW  |  SOC ${soc}%  |  ${hours}h ${mins}m")
             .setOngoing(true)
             .setOnlyAlertOnce(true)

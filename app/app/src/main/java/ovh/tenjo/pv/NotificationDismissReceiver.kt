@@ -13,12 +13,13 @@ class NotificationDismissReceiver : BroadcastReceiver() {
         var lastPower: String = "?"
         var lastSoc: String = "?"
         var lastMinutes: String = "0"
+        var lastWindowName: String = ""
         var isActive: Boolean = false
     }
 
     override fun onReceive(context: Context, intent: Intent?) {
         if (isActive) {
-            AutoDischargeService.start(context, lastPower, lastSoc, lastMinutes)
+            AutoDischargeService.start(context, lastPower, lastSoc, lastMinutes, lastWindowName)
         }
     }
 }

@@ -30,16 +30,23 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import ovh.tenjo.pv.AutoDischargeState
 import ovh.tenjo.pv.DashboardState
+import ovh.tenjo.pv.DischargeWindowsState
 import ovh.tenjo.pv.SolarViewModel
+import ovh.tenjo.pv.api.DischargeWindow
+import ovh.tenjo.pv.api.DischargeWindowStatus
 import ovh.tenjo.pv.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DashboardScreen(viewModel: SolarViewModel, modifier: Modifier = Modifier) {
+fun DashboardScreen(
+    viewModel: SolarViewModel,
+    modifier: Modifier = Modifier,
+    onWindowClick: (String) -> Unit = {},
+    onCreateWindow: () -> Unit = {},
+) {
     val state by viewModel.dashboard.collectAsState()
-    val adState by viewModel.autoDischarge.collectAsState()
+    val windowsState by viewModel.windows.collectAsState()
 
     PullToRefreshBox(
         isRefreshing = state.isRefreshing,
@@ -70,10 +77,10 @@ fun DashboardScreen(viewModel: SolarViewModel, modifier: Modifier = Modifier) {
                 // -- Today Stats --
                 StatsRow(state)
 
-                Spacer(Modifier.weight(1f))
+                Spacer(Modifier.height(24.dp))
 
-                // -- Auto-discharge --
-                AutoDischargeCard(adState, viewModel)
+                // -- Discharge Windows --
+                DischargeWindowsList(windowsState, onWindowClick, onCreateWindow)
             }
         }
     }
@@ -474,25 +481,74 @@ private fun StatCard(
 }
 
 // ------------------------------------------------------------------
-// Auto-discharge card
+// Discharge Windows list
 // ------------------------------------------------------------------
 
 @Composable
-private fun AutoDischargeCard(state: AutoDischargeState, viewModel: SolarViewModel) {
-    // Auto-clear message
-    LaunchedEffect(state.message) {
-        if (state.message != null) {
-            kotlinx.coroutines.delay(3000)
-            viewModel.clearAutoDischargeMessage()
+private fun DischargeWindowsList(
+    state: DischargeWindowsState,
+    onWindowClick: (String) -> Unit,
+    onCreateWindow: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Schedule,
+                    contentDescription = null,
+                    tint = EnergyOrange,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Discharge Windows", style = MaterialTheme.typography.titleMedium)
+            }
+            IconButton(onClick = onCreateWindow, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Default.Add, contentDescription = "Add window", tint = EnergyOrange)
+            }
+        }
+
+        if (state.windows.isEmpty() && !state.isLoading) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = SurfaceContainer,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    "No discharge windows configured",
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = OnSurfaceVariant,
+                )
+            }
+        }
+
+        state.windows.forEach { window ->
+            val windowStatus = state.statuses[window.id]
+            DischargeWindowCard(window, windowStatus, onWindowClick)
         }
     }
+}
+
+@Composable
+private fun DischargeWindowCard(
+    window: DischargeWindow,
+    status: DischargeWindowStatus?,
+    onClick: (String) -> Unit,
+) {
+    val isActive = status != null && status.active
+    val alpha = if (window.enabled) 1f else 0.5f
 
     Surface(
-        shape = RoundedCornerShape(16.dp),
+        onClick = { onClick(window.id) },
+        shape = RoundedCornerShape(12.dp),
         color = SurfaceContainer,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(Modifier.padding(16.dp)) {
+        Column(Modifier.padding(14.dp)) {
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -502,98 +558,90 @@ private fun AutoDischargeCard(state: AutoDischargeState, viewModel: SolarViewMod
                     Icon(
                         Icons.Default.NightsStay,
                         contentDescription = null,
-                        tint = if (state.active) EnergyOrange else OnSurfaceVariant,
-                        modifier = Modifier.size(20.dp),
+                        tint = (if (isActive) EnergyOrange else OnSurfaceVariant).copy(alpha = alpha),
+                        modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        "Auto-Discharge",
-                        style = MaterialTheme.typography.titleMedium,
+                        window.name,
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
                     )
                 }
-                if (state.active) {
+                if (isActive) {
                     Surface(
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(6.dp),
                         color = EnergyOrange.copy(alpha = 0.15f),
                     ) {
                         Text(
                             "ACTIVE",
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                             color = EnergyOrange,
                         )
                     }
-                }
-            }
-
-            if (state.active) {
-                Spacer(Modifier.height(12.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column {
-                        Text("POWER", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
-                        Text(
-                            "%.2f kW".format(state.dischargePowerKw ?: 0.0),
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                        )
-                    }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text("REMAINING", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
-                        val mins = state.minutesRemaining ?: 0.0
-                        val hours = (mins / 60).toInt()
-                        val m = (mins % 60).toInt()
-                        Text(
-                            "${hours}h ${m}m",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                        )
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            Button(
-                onClick = {
-                    if (state.active) viewModel.stopAutoDischarge()
-                    else viewModel.startAutoDischarge()
-                },
-                modifier = Modifier.fillMaxWidth().height(44.dp),
-                shape = RoundedCornerShape(50),
-                enabled = !state.isStarting && !state.isStopping,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (state.active) MaterialTheme.colorScheme.error else EnergyOrange,
-                    contentColor = Color.White,
-                ),
-            ) {
-                if (state.isStarting || state.isStopping) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        color = Color.White,
-                        strokeWidth = 2.dp,
-                    )
-                } else {
-                    Icon(
-                        if (state.active) Icons.Default.StopCircle else Icons.Default.PlayArrow,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
+                } else if (!window.enabled) {
                     Text(
-                        if (state.active) "Stop Discharge" else "Start Auto-Discharge",
-                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                        "DISABLED",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = OnSurfaceVariant.copy(alpha = 0.5f),
                     )
                 }
             }
 
-            state.message?.let { msg ->
-                Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
+
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                // Time range
+                val endTime = computeEndTime(window.startTime, window.durationMinutes)
                 Text(
-                    msg,
+                    "${window.startTime} \u2192 $endTime",
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (msg.startsWith("Error")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                    color = OnSurfaceVariant.copy(alpha = alpha),
                 )
+                // Target SOC
+                Text(
+                    "Target: ${window.targetSoc.toInt()}%",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurfaceVariant.copy(alpha = alpha),
+                )
+            }
+
+            // Show live stats if active
+            if (isActive) {
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        "%.2f kW".format(status.dischargePowerKw ?: 0.0),
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                        color = EnergyOrange,
+                    )
+                    val mins = status.minutesRemaining ?: 0.0
+                    val hours = (mins / 60).toInt()
+                    val m = (mins % 60).toInt()
+                    Text(
+                        "${hours}h ${m}m remaining",
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                        color = EnergyOrange,
+                    )
+                }
             }
         }
     }
+}
+
+private fun computeEndTime(startTime: String, durationMinutes: Int): String {
+    val parts = startTime.split(":")
+    val totalMinutes = parts[0].toInt() * 60 + parts[1].toInt() + durationMinutes
+    val endHour = (totalMinutes / 60) % 24
+    val endMinute = totalMinutes % 60
+    return "%02d:%02d".format(endHour, endMinute)
 }
 
 // ------------------------------------------------------------------

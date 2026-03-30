@@ -9,6 +9,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import ovh.tenjo.pv.api.DischargeWindowCreate
+import ovh.tenjo.pv.api.DischargeWindowStatus
+import ovh.tenjo.pv.api.DischargeWindowUpdate
 import ovh.tenjo.pv.api.SolarApiClient
 
 data class DashboardState(
@@ -27,14 +30,18 @@ data class DashboardState(
     val error: String? = null,
 )
 
-data class AutoDischargeState(
-    val active: Boolean = false,
-    val currentSoc: Double? = null,
-    val dischargePowerKw: Double? = null,
-    val minutesRemaining: Double? = null,
-    val targetTime: String? = null,
+data class DischargeWindowsState(
+    val windows: List<ovh.tenjo.pv.api.DischargeWindow> = emptyList(),
+    val statuses: Map<String, DischargeWindowStatus> = emptyMap(),
+    val isLoading: Boolean = false,
+    val error: String? = null,
+)
+
+data class WindowDetailState(
     val isStarting: Boolean = false,
     val isStopping: Boolean = false,
+    val isSaving: Boolean = false,
+    val isDeleting: Boolean = false,
     val message: String? = null,
 )
 
@@ -45,15 +52,20 @@ class SolarViewModel : ViewModel() {
     private val _dashboard = MutableStateFlow(DashboardState())
     val dashboard: StateFlow<DashboardState> = _dashboard.asStateFlow()
 
-    private val _autoDischarge = MutableStateFlow(AutoDischargeState())
-    val autoDischarge: StateFlow<AutoDischargeState> = _autoDischarge.asStateFlow()
+    private val _windows = MutableStateFlow(DischargeWindowsState())
+    val windows: StateFlow<DischargeWindowsState> = _windows.asStateFlow()
+
+    private val _windowDetail = MutableStateFlow(WindowDetailState())
+    val windowDetail: StateFlow<WindowDetailState> = _windowDetail.asStateFlow()
 
     private var statusPollingJob: Job? = null
 
     init {
         refreshDashboard()
-        refreshAutoDischargeStatus()
+        loadWindows()
     }
+
+    // -- Dashboard --
 
     fun refreshDashboard() {
         loadDashboard(showLoading = true)
@@ -96,44 +108,97 @@ class SolarViewModel : ViewModel() {
         }
     }
 
-    // -- Auto-discharge --
+    // -- Discharge Windows --
 
-    fun refreshAutoDischargeStatus() {
+    fun loadWindows() {
         viewModelScope.launch {
+            _windows.value = _windows.value.copy(isLoading = true, error = null)
             try {
-                val s = api.getAutoDischargeStatus(SolarApiClient.BATTERY_ID)
-                _autoDischarge.value = _autoDischarge.value.copy(
-                    active = s.active,
-                    currentSoc = s.currentSoc,
-                    dischargePowerKw = s.dischargePowerKw,
-                    minutesRemaining = s.minutesRemaining,
-                    targetTime = s.targetTime,
-                    message = null,
+                val windowList = api.getDischargeWindows()
+                val statuses = api.getWindowStatuses()
+                val statusMap = statuses.associateBy { it.windowId }
+                _windows.value = DischargeWindowsState(
+                    windows = windowList,
+                    statuses = statusMap,
                 )
-                if (s.active) startStatusPolling() else stopStatusPolling()
-            } catch (_: Exception) {
-                // Silently ignore — status will refresh on next poll or action
+                if (statuses.any { it.active }) startStatusPolling() else stopStatusPolling()
+            } catch (e: Exception) {
+                _windows.value = _windows.value.copy(
+                    isLoading = false,
+                    error = e.message ?: "Failed to load windows",
+                )
             }
         }
     }
 
-    fun startAutoDischarge() {
+    fun loadStatuses() {
         viewModelScope.launch {
-            _autoDischarge.value = _autoDischarge.value.copy(isStarting = true, message = null)
             try {
-                val r = api.startAutoDischarge(SolarApiClient.BATTERY_ID)
-                _autoDischarge.value = _autoDischarge.value.copy(
-                    isStarting = false,
-                    active = true,
-                    currentSoc = r.initialSoc,
-                    dischargePowerKw = r.dischargePowerKw,
-                    targetTime = r.targetTime,
-                    message = "Started",
-                )
-                startStatusPolling()
-                refreshDashboard()
+                val statuses = api.getWindowStatuses()
+                val statusMap = statuses.associateBy { it.windowId }
+                _windows.value = _windows.value.copy(statuses = statusMap)
+                if (statuses.any { it.active }) startStatusPolling() else stopStatusPolling()
+            } catch (_: Exception) { }
+        }
+    }
+
+    fun createWindow(create: DischargeWindowCreate) {
+        viewModelScope.launch {
+            _windowDetail.value = _windowDetail.value.copy(isSaving = true, message = null)
+            try {
+                api.createDischargeWindow(create)
+                _windowDetail.value = WindowDetailState(message = "Window created")
+                loadWindows()
             } catch (e: Exception) {
-                _autoDischarge.value = _autoDischarge.value.copy(
+                _windowDetail.value = _windowDetail.value.copy(
+                    isSaving = false,
+                    message = "Error: ${e.message}",
+                )
+            }
+        }
+    }
+
+    fun updateWindow(windowId: String, update: DischargeWindowUpdate) {
+        viewModelScope.launch {
+            _windowDetail.value = _windowDetail.value.copy(isSaving = true, message = null)
+            try {
+                api.updateDischargeWindow(windowId, update)
+                _windowDetail.value = WindowDetailState(message = "Saved")
+                loadWindows()
+            } catch (e: Exception) {
+                _windowDetail.value = _windowDetail.value.copy(
+                    isSaving = false,
+                    message = "Error: ${e.message}",
+                )
+            }
+        }
+    }
+
+    fun deleteWindow(windowId: String) {
+        viewModelScope.launch {
+            _windowDetail.value = _windowDetail.value.copy(isDeleting = true, message = null)
+            try {
+                api.deleteDischargeWindow(windowId)
+                _windowDetail.value = WindowDetailState(message = "Deleted")
+                loadWindows()
+            } catch (e: Exception) {
+                _windowDetail.value = _windowDetail.value.copy(
+                    isDeleting = false,
+                    message = "Error: ${e.message}",
+                )
+            }
+        }
+    }
+
+    fun startWindow(windowId: String) {
+        viewModelScope.launch {
+            _windowDetail.value = _windowDetail.value.copy(isStarting = true, message = null)
+            try {
+                api.startWindow(windowId)
+                _windowDetail.value = _windowDetail.value.copy(isStarting = false, message = "Started")
+                loadWindows()
+            } catch (e: Exception) {
+                _windowDetail.value = _windowDetail.value.copy(
                     isStarting = false,
                     message = "Error: ${e.message}",
                 )
@@ -141,16 +206,15 @@ class SolarViewModel : ViewModel() {
         }
     }
 
-    fun stopAutoDischarge() {
+    fun stopWindow(windowId: String) {
         viewModelScope.launch {
-            _autoDischarge.value = _autoDischarge.value.copy(isStopping = true, message = null)
+            _windowDetail.value = _windowDetail.value.copy(isStopping = true, message = null)
             try {
-                api.stopAutoDischarge(SolarApiClient.BATTERY_ID)
-                _autoDischarge.value = AutoDischargeState(message = "Stopped")
-                stopStatusPolling()
-                refreshDashboard()
+                api.stopWindow(windowId)
+                _windowDetail.value = _windowDetail.value.copy(isStopping = false, message = "Stopped")
+                loadWindows()
             } catch (e: Exception) {
-                _autoDischarge.value = _autoDischarge.value.copy(
+                _windowDetail.value = _windowDetail.value.copy(
                     isStopping = false,
                     message = "Error: ${e.message}",
                 )
@@ -158,16 +222,22 @@ class SolarViewModel : ViewModel() {
         }
     }
 
-    fun clearAutoDischargeMessage() {
-        _autoDischarge.value = _autoDischarge.value.copy(message = null)
+    fun toggleWindowEnabled(windowId: String, enabled: Boolean) {
+        updateWindow(windowId, DischargeWindowUpdate(enabled = enabled))
     }
+
+    fun clearDetailMessage() {
+        _windowDetail.value = _windowDetail.value.copy(message = null)
+    }
+
+    // -- Status polling --
 
     private fun startStatusPolling() {
         if (statusPollingJob?.isActive == true) return
         statusPollingJob = viewModelScope.launch {
             while (isActive) {
-                delay(10_000) // Poll every 10 seconds
-                refreshAutoDischargeStatus()
+                delay(10_000)
+                loadStatuses()
                 loadDashboard(showLoading = false)
             }
         }
