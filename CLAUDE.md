@@ -55,6 +55,15 @@ pv/
 │   ├── routers/                  # Other API routers
 │   │   ├── dashboard.py          # Dashboard endpoint
 │   │   └── health.py             # Health check
+│   ├── tests/                    # Pytest test suite
+│   │   ├── conftest.py           # Shared fixtures (FakeSession, app_state, clock, sleep patching)
+│   │   ├── helpers.py            # FakeSession and FakeAppState classes
+│   │   ├── test_power_calculator.py    # Pure function tests
+│   │   ├── test_command_builder.py     # Signal payload tests
+│   │   ├── test_config_store.py        # CRUD, overlap detection
+│   │   ├── test_correction_loop.py     # Full loop lifecycle
+│   │   ├── test_scheduler.py           # Window scheduling, resume, start/stop
+│   │   └── test_api_endpoints.py       # HTTP-level CRUD and control
 │   ├── Dockerfile                # Multi-arch image (amd64 + arm64)
 │   ├── docker-compose.yml        # Local dev deployment
 │   ├── pyproject.toml            # uv project dependencies
@@ -214,6 +223,23 @@ curl -X POST -H "Content-Type: application/json" -d '{"minutes":2}' http://local
 # Reset to real time
 curl -X POST http://localhost:8000/mock/time/reset
 ```
+
+### Running Tests
+
+```bash
+cd api
+uv run pytest tests/ -v          # Run all tests
+uv run pytest tests/ -v -x       # Stop on first failure
+uv run pytest tests/test_correction_loop.py -v  # Run specific file
+```
+
+Tests run in ~1 second with no external dependencies (no Node.js mock, no Firebase, no network). The test suite uses:
+
+- **FakeSession**: In-process mock that returns configurable SOC values and records all signals sent to the inverter. No HTTP calls.
+- **Mock clock** (`mock_clock.set_time/advance/reset`): Controls virtual time for discharge window scheduling.
+- **Patched `asyncio.sleep`**: Advances the virtual clock instantly instead of waiting — a 4-hour discharge window completes in milliseconds.
+- **Patched notifications**: All FCM notification functions are mocked. Tests verify correct calls (started/update/stopped) without touching Firebase.
+- **Isolated config store**: Each test gets a `tmp_path`-based config file via the `config_path` fixture, preventing interference with dev `discharge_windows.json`.
 
 ### API (local, production mode)
 
