@@ -21,7 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.firebase.messaging.FirebaseMessaging
 import ovh.tenjo.pv.api.SolarApiClient
-import ovh.tenjo.pv.ui.ChargeRampScreen
+import ovh.tenjo.pv.ui.ChargeWindowDetailScreen
 import ovh.tenjo.pv.ui.CreateWindowDialog
 import ovh.tenjo.pv.ui.DashboardScreen
 import ovh.tenjo.pv.ui.DischargeWindowDetailScreen
@@ -55,40 +55,41 @@ class MainActivity : ComponentActivity() {
         setContent {
             PVManagerTheme {
                 val solarViewModel: SolarViewModel = viewModel()
-                var selectedWindowId by remember { mutableStateOf<String?>(null) }
+                var selectedDischargeWindowId by remember { mutableStateOf<String?>(null) }
+                var selectedChargeWindowId by remember { mutableStateOf<String?>(null) }
                 var showCreateDialog by remember { mutableStateOf(false) }
-                var showChargeRamp by remember { mutableStateOf(false) }
 
-                BackHandler(enabled = selectedWindowId != null || showChargeRamp) {
-                    if (showChargeRamp) showChargeRamp = false
-                    else selectedWindowId = null
+                BackHandler(enabled = selectedChargeWindowId != null || selectedDischargeWindowId != null) {
+                    if (selectedChargeWindowId != null) selectedChargeWindowId = null
+                    else selectedDischargeWindowId = null
                 }
 
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    if (showChargeRamp) {
-                        ChargeRampScreen(
+                    if (selectedChargeWindowId != null) {
+                        ChargeWindowDetailScreen(
+                            windowId = selectedChargeWindowId!!,
                             viewModel = solarViewModel,
-                            onBack = { showChargeRamp = false },
+                            onBack = { selectedChargeWindowId = null },
                         )
-                    } else if (selectedWindowId != null) {
+                    } else if (selectedDischargeWindowId != null) {
                         DischargeWindowDetailScreen(
-                            windowId = selectedWindowId!!,
+                            windowId = selectedDischargeWindowId!!,
                             viewModel = solarViewModel,
-                            onBack = { selectedWindowId = null },
+                            onBack = { selectedDischargeWindowId = null },
                         )
                     } else {
                         DashboardScreen(
                             viewModel = solarViewModel,
                             modifier = Modifier.padding(innerPadding),
-                            onWindowClick = {
-                            solarViewModel.clearDetailMessage()
-                            selectedWindowId = it
-                        },
-                            onCreateWindow = { showCreateDialog = true },
-                            onChargeRampClick = {
-                                solarViewModel.clearChargeRampMessage()
-                                showChargeRamp = true
+                            onDischargeWindowClick = {
+                                solarViewModel.clearDetailMessage()
+                                selectedDischargeWindowId = it
                             },
+                            onChargeWindowClick = {
+                                solarViewModel.clearChargeWindowDetailMessage()
+                                selectedChargeWindowId = it
+                            },
+                            onCreateWindow = { showCreateDialog = true },
                         )
                     }
 

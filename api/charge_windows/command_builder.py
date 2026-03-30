@@ -1,4 +1,4 @@
-"""FusionSolar signal payload construction for charge ramp.
+"""FusionSolar signal payload construction for charge windows.
 
 Builds the signal command lists sent to the inverter
 for operation mode switching and max charge power control.
@@ -32,7 +32,7 @@ TOU_WINDOWS_VALUE = json.dumps([
 
 
 def build_start_command(power_w: int) -> list[dict]:
-    """Signals to begin ramp: self-consumption + AC charge off + initial power."""
+    """Signals to begin charge: self-consumption + AC charge off + initial power."""
     return [
         {"id": SIGNALS["max_charge_power"], "value": str(power_w)},
         {"id": SIGNALS["operation_mode"], "value": "2"},

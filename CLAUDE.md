@@ -52,14 +52,15 @@ pv/
 │   │   ├── scheduler.py          # Multi-window scheduler (auto-start, mid-window resume)
 │   │   ├── router_windows.py     # CRUD endpoints for /discharge-windows
 │   │   └── router_control.py     # Start/stop/status endpoints + backward compat
-│   ├── charge_ramp/              # Solar charge ramp (anti-clipping) package
-│   │   ├── models.py             # Pydantic models (config, status, responses)
-│   │   ├── config_store.py       # Single-config JSON persistence + active ramp state
-│   │   ├── ramp_calculator.py    # Cosine bell curve math (pure functions)
+│   ├── charge_windows/            # Charge windows (anti-clipping) package
+│   │   ├── models.py             # Pydantic models (window config, status, API responses)
+│   │   ├── config_store.py       # JSON file I/O (load/save/CRUD, cross-type overlap detection)
+│   │   ├── ramp_calculator.py    # Asymmetric cosine bell curve math (pure functions)
 │   │   ├── command_builder.py    # FusionSolar signal payloads (start/update/restore)
 │   │   ├── ramp_loop.py          # Background loop that adjusts max charge power
-│   │   ├── manager.py            # Start/stop/status/restart recovery
-│   │   └── router.py             # Config + control endpoints for /charge-ramp
+│   │   ├── scheduler.py          # Multi-window scheduler (auto-start, mid-window resume)
+│   │   ├── router_windows.py     # CRUD endpoints for /charge-windows
+│   │   └── router_control.py     # Start/stop/status endpoints
 │   ├── routers/                  # Other API routers
 │   │   ├── dashboard.py          # Dashboard endpoint
 │   │   └── health.py             # Health check
@@ -72,10 +73,12 @@ pv/
 │   │   ├── test_correction_loop.py     # Full loop lifecycle
 │   │   ├── test_scheduler.py           # Window scheduling, resume, start/stop
 │   │   ├── test_api_endpoints.py       # HTTP-level CRUD and control
-│   │   ├── test_ramp_calculator.py     # Cosine bell curve math
-│   │   ├── test_ramp_command_builder.py # Charge ramp signal payloads
-│   │   ├── test_ramp_loop.py           # Ramp loop lifecycle
-│   │   └── test_ramp_api.py            # Charge ramp HTTP endpoints
+│   │   ├── test_charge_ramp_calculator.py   # Asymmetric cosine bell curve math
+│   │   ├── test_charge_window_command_builder.py # Charge window signal payloads
+│   │   ├── test_charge_window_config_store.py    # CRUD, cross-type overlap detection
+│   │   ├── test_charge_window_ramp_loop.py       # Ramp loop lifecycle
+│   │   ├── test_charge_window_scheduler.py       # Charge window scheduling
+│   │   └── test_charge_window_api.py             # Charge window HTTP endpoints
 │   ├── Dockerfile                # Multi-arch image (amd64 + arm64)
 │   ├── docker-compose.yml        # Local dev deployment
 │   ├── pyproject.toml            # uv project dependencies
@@ -98,10 +101,10 @@ pv/
     │   ├── NotificationDismissReceiver.kt # Re-post notification on swipe
     │   ├── StopDischargeBroadcastReceiver.kt # Stop from notification action
     │   └── ui/
-    │       ├── DashboardScreen.kt              # Energy flow diagram + window list + inverter info
-    │       ├── DischargeWindowDetailScreen.kt  # Window detail/edit/control
-    │       ├── ChargeRampScreen.kt             # Charge ramp config + control + bell curve
-    │       ├── CreateWindowDialog.kt           # New window creation dialog
+    │       ├── DashboardScreen.kt              # Energy flow diagram + unified window list + inverter info
+    │       ├── DischargeWindowDetailScreen.kt  # Discharge window detail/edit/control
+    │       ├── ChargeWindowDetailScreen.kt     # Charge window detail/edit/control + bell curve
+    │       ├── CreateWindowDialog.kt           # New window creation dialog (discharge + charge)
     │       ├── TimePickers.kt                  # Shared time/duration picker dialogs
     │       ├── TimeUtils.kt                    # Shared time parsing/formatting
     │       └── theme/                          # Dark solar theme (Color, Theme, Type)
@@ -152,15 +155,19 @@ All endpoints except `/health` and `/docs` require `X-API-Key` header.
 | POST | `/discharge-windows/{id}/start` | Manually start a window now |
 | POST | `/discharge-windows/{id}/stop` | Stop a running window |
 
-### Charge Ramp
+### Charge Windows
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/charge-ramp/config` | Get saved ramp config |
-| PUT | `/charge-ramp/config` | Update config (partial) |
-| GET | `/charge-ramp/status` | Runtime status (active, power, progress) |
-| POST | `/charge-ramp/start` | Start ramp with current config |
-| POST | `/charge-ramp/stop` | Stop ramp, restore TOU mode |
+| GET | `/charge-windows` | List all configured charge windows |
+| GET | `/charge-windows/{id}` | Get single charge window |
+| POST | `/charge-windows` | Create charge window (validates cross-type overlap) |
+| PUT | `/charge-windows/{id}` | Update charge window (partial) |
+| DELETE | `/charge-windows/{id}` | Delete charge window (stops if running) |
+| GET | `/charge-windows/status` | Runtime status for all charge windows |
+| GET | `/charge-windows/{id}/status` | Status for single charge window |
+| POST | `/charge-windows/{id}/start` | Manually start a charge window now |
+| POST | `/charge-windows/{id}/stop` | Stop a running charge window |
 
 ### Backward-Compatible (legacy auto-discharge)
 
@@ -192,15 +199,15 @@ The scheduler auto-starts windows at their configured time and uses a self-corre
 
 A default "Night Export" window (22:00-02:00, target 0%) is seeded on first startup.
 
-## Charge Ramp (Anti-Clipping)
+## Charge Windows (Anti-Clipping)
 
 ### Problem
 
-The 7.65 kWp panels can produce more than the 5 kW inverter limit on sunny days, causing clipping (excess PV energy is lost). The charge ramp feature absorbs this excess into the battery by gradually increasing the max charge power to follow the solar production curve.
+The 7.65 kWp panels can produce more than the 5 kW inverter limit on sunny days, causing clipping (excess PV energy is lost). Charge windows absorb this excess into the battery by gradually increasing the max charge power to follow the solar production curve.
 
 ### How It Works
 
-The user manually triggers a charge ramp from the app. The system:
+Charge windows are scheduled or manually triggered from the app. The system:
 
 1. **Switches to self-consumption mode** — Operation Mode changes from TOU (5) to Max Self-Consumption (2)
 2. **Disables Charge from AC** — ensures the battery only charges from PV, not grid
@@ -208,33 +215,40 @@ The user manually triggers a charge ramp from the app. The system:
 4. **Ramps power along a cosine bell curve** — every 5 min (30s in mock), recalculates the target power based on elapsed time and adjusts the max charge power signal
 5. **Restores TOU mode on completion/stop** — sends 4 signals: Operation Mode=TOU, Charge from AC=Enabled, Max Charge Power=2500W, TOU Time Windows (re-sent because FusionSolar forgets them on mode switch)
 
-### Cosine Bell Curve
+### Asymmetric Cosine Bell Curve
 
-The power follows a smooth S-curve on each half of the duration:
+The power follows a smooth S-curve between three time points (start, peak, end):
 
 ```
-First half (progress 0.0 → 0.5):   initial_power → top_power   (cosine ease)
-Second half (progress 0.5 → 1.0):  top_power → final_power     (cosine ease)
+Start → Peak segment:  cosine ease from start_power → peak_power
+Peak → End segment:    cosine ease from peak_power → end_power
 
-Formula per half:  smooth_t = (1 - cos(π × t)) / 2
-                   power = start + (end - start) × smooth_t
+Formula per segment:  t = (now - segment_start) / (segment_end - segment_start)
+                      smooth_t = (1 - cos(π × t)) / 2
+                      power = from_power + (to_power - from_power) × smooth_t
 ```
 
-Example with initial=200W, top=2500W, final=200W over 4 hours:
-- At 0h (start): 200W
-- At 1h (quarter): ~1350W (smooth ramp up)
-- At 2h (midpoint): 2500W (peak)
-- At 3h (three-quarter): ~1350W (smooth ramp down)
-- At 4h (end): 200W → restores TOU mode
+The peak doesn't have to be at the midpoint, allowing **asymmetric curves** (e.g., 1h ramp up, 3h ramp down).
+
+Example: start 10:00/200W, peak 12:00/2500W, end 14:00/200W:
+- At 10:00 (start): 200W
+- At 11:00: ~1350W (smooth ramp up)
+- At 12:00 (peak): 2500W
+- At 13:00: ~1350W (smooth ramp down)
+- At 14:00 (end): 200W → restores TOU mode
 
 ### Configuration
 
-Single config persisted to `/data/charge_ramp_config.json` (Docker) or `./charge_ramp_config.json` (local dev):
+Charge windows stored in `/data/charge_windows.json` (Docker) or `./charge_windows.json` (local dev). Each window defines:
 
-- **duration_minutes**: 10-1440 (default: 240 = 4 hours)
-- **initial_power**: 200-2500W (default: 200)
-- **top_power**: 200-2500W (default: 2500)
-- **final_power**: 200-2500W (default: 200)
+- **name**: Window name
+- **start_time**: "HH:MM" format + **start_power**: 200-2500W
+- **peak_time**: "HH:MM" format + **peak_power**: 200-2500W
+- **end_time**: "HH:MM" format + **end_power**: 200-2500W
+- **notify**: send FCM push notifications
+- **enabled**: toggle without deleting
+
+Presets available in the app: "Mid-day" (10:00→12:00→14:00) and "Now 4h" (now→now+2h→now+4h).
 
 ### FusionSolar Signals Used
 
@@ -247,30 +261,32 @@ Single config persisted to `/data/charge_ramp_config.json` (Docker) or `./charge
 
 ### Restart Recovery
 
-- On start: writes `charge_ramp_active.json` with `{start_time, config}`
+- On start: writes `charge_window_active_{id}.json` with `{start_time, window}`
 - On stop/complete: deletes the file
-- On API startup: `check_resume()` reads the file — if ramp would have completed during downtime, sends restore command immediately; if mid-ramp, resumes
+- On API startup: scheduler checks for active files — if window expired during downtime, sends restore command immediately; if mid-window, resumes
 
-### Conflict Guard
+### Cross-Type Overlap Detection
 
-Cannot run simultaneously with discharge windows. `manager.start()` checks `app.state.discharge_tasks` — if any discharge window is active, returns 409.
+Charge and discharge windows cannot overlap. Both config stores check against each other when creating or updating windows. The overlap detection uses minute-of-day sets (0-1439) and handles midnight crossing correctly.
 
-### Code Structure (`api/charge_ramp/`)
+### Code Structure (`api/charge_windows/`)
 
 | File | Responsibility |
 |------|---------------|
-| `models.py` | Pydantic models: config, update, status, responses |
-| `config_store.py` | JSON persistence + active ramp state for restart recovery |
-| `ramp_calculator.py` | Pure cosine bell curve math |
+| `models.py` | Pydantic models: window config, create/update, status, responses |
+| `config_store.py` | JSON CRUD + cross-type overlap detection + active state persistence |
+| `ramp_calculator.py` | Pure asymmetric cosine bell curve math |
 | `command_builder.py` | FusionSolar signal payloads (start, power update, restore) |
-| `ramp_loop.py` | Async background task: periodic power adjustment |
-| `manager.py` | Lifecycle: start/stop/status/check_resume |
-| `router.py` | 5 FastAPI endpoints |
+| `ramp_loop.py` | Async background task: periodic power adjustment per window |
+| `scheduler.py` | Multi-window scheduler: auto-start, mid-window resume |
+| `router_windows.py` | CRUD endpoints for /charge-windows |
+| `router_control.py` | Start/stop/status endpoints |
 
 ### Android App
 
-- **Dashboard**: "Solar Charge Ramp" card shows status (idle/active with progress bar)
-- **ChargeRampScreen**: config sliders (200-2500W, 100W steps), duration picker, bell curve preview canvas, save/start/stop with confirmation dialogs
+- **Dashboard**: Unified "Windows" list shows both charge and discharge windows, sorted by start time. Charge windows show battery icon (green), discharge windows show sun/moon icon (orange).
+- **ChargeWindowDetailScreen**: 3 time pickers (start/peak/end), 3 power sliders (200-2500W, 100W steps), asymmetric bell curve preview canvas, presets dropdown (Mid-day, Now 4h), save/start/stop with confirmation dialogs
+- **CreateWindowDialog**: Type selector (Discharge/Charge), charge presets available
 - **Inverter icon**: center of energy flow diamond, tappable — shows operation mode, AC charge, max charge power (read-only, refreshed every 20s from `/dashboard` response)
 
 ## FusionSolar Signal IDs
@@ -392,7 +408,7 @@ adb shell am start -n ovh.tenjo.pv/.MainActivity
 - **Public URL**: `https://pv.tenjo.ovh` (Cloudflare tunnel)
 - **Session management**: Cookies persisted to `/data/cookies.json` volume — survives container restarts without re-login
 - **Discharge windows config**: Persisted to `/data/discharge_windows.json` volume
-- **Charge ramp config**: Persisted to `/data/charge_ramp_config.json` volume
+- **Charge windows config**: Persisted to `/data/charge_windows.json` volume
 
 ## Environment Variables
 
@@ -416,5 +432,6 @@ adb shell am start -n ovh.tenjo.pv/.MainActivity
 - **Mid-window resume**: on API restart, the scheduler detects windows that should be active and resumes them for the remaining time
 - **Mock clock**: in mock mode, all time-dependent scheduling uses `mock_clock.get_now()` instead of `datetime.now()`, allowing time manipulation via API for testing
 - **Component-based architecture**: code is organized into small, single-responsibility files. The `discharge/` and `charge_ramp/` packages separate models, config I/O, power math, signal commands, background loops, managers, and routers into individual modules
-- **Charge ramp config snapshot**: the ramp loop captures config at start time and does not re-read. Config changes during an active ramp take effect on the next start
+- **Charge window config snapshot**: the ramp loop captures config at start time and does not re-read. Config changes during an active charge window take effect on the next start
+- **Cross-type overlap detection**: charge and discharge windows share minute-of-day overlap validation — neither type can overlap the other
 - **TOU windows re-sent on restore**: FusionSolar forgets TOU time windows when switching away from TOU mode. The restore command includes the full TOU window config (signal 230320283)

@@ -33,10 +33,12 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import ovh.tenjo.pv.ChargeRampState
+import ovh.tenjo.pv.ChargeWindowsState
 import ovh.tenjo.pv.DashboardState
 import ovh.tenjo.pv.DischargeWindowsState
 import ovh.tenjo.pv.SolarViewModel
+import ovh.tenjo.pv.api.ChargeWindow
+import ovh.tenjo.pv.api.ChargeWindowStatus
 import ovh.tenjo.pv.api.DischargeWindow
 import ovh.tenjo.pv.api.DischargeWindowStatus
 import ovh.tenjo.pv.ui.theme.*
@@ -46,13 +48,13 @@ import ovh.tenjo.pv.ui.theme.*
 fun DashboardScreen(
     viewModel: SolarViewModel,
     modifier: Modifier = Modifier,
-    onWindowClick: (String) -> Unit = {},
+    onDischargeWindowClick: (String) -> Unit = {},
+    onChargeWindowClick: (String) -> Unit = {},
     onCreateWindow: () -> Unit = {},
-    onChargeRampClick: () -> Unit = {},
 ) {
     val state by viewModel.dashboard.collectAsState()
     val windowsState by viewModel.windows.collectAsState()
-    val chargeRampState by viewModel.chargeRamp.collectAsState()
+    val chargeWindowsState by viewModel.chargeWindows.collectAsState()
     var showInverterInfo by remember { mutableStateOf(false) }
 
     PullToRefreshBox(
@@ -86,13 +88,14 @@ fun DashboardScreen(
 
                 Spacer(Modifier.height(24.dp))
 
-                // -- Charge Ramp --
-                ChargeRampCard(chargeRampState, onChargeRampClick)
-
-                Spacer(Modifier.height(24.dp))
-
-                // -- Discharge Windows --
-                DischargeWindowsList(windowsState, onWindowClick, onCreateWindow)
+                // -- Windows (unified list) --
+                WindowsList(
+                    dischargeState = windowsState,
+                    chargeState = chargeWindowsState,
+                    onDischargeWindowClick = onDischargeWindowClick,
+                    onChargeWindowClick = onChargeWindowClick,
+                    onCreateWindow = onCreateWindow,
+                )
             }
         }
     }
@@ -573,15 +576,89 @@ private fun InverterInfoRow(label: String, value: String, valueColor: Color) {
 }
 
 // ------------------------------------------------------------------
-// Charge Ramp card
+// Unified Windows list (charge + discharge)
 // ------------------------------------------------------------------
 
+private sealed class WindowItem(val startMinutes: Int) {
+    class Discharge(val window: DischargeWindow, val status: DischargeWindowStatus?) :
+        WindowItem(parseTimeToMinutes(window.startTime))
+    class Charge(val window: ChargeWindow, val status: ChargeWindowStatus?) :
+        WindowItem(parseTimeToMinutes(window.startTime))
+}
+
 @Composable
-private fun ChargeRampCard(state: ChargeRampState, onClick: () -> Unit) {
-    val isActive = state.status?.active == true
+private fun WindowsList(
+    dischargeState: DischargeWindowsState,
+    chargeState: ChargeWindowsState,
+    onDischargeWindowClick: (String) -> Unit,
+    onChargeWindowClick: (String) -> Unit,
+    onCreateWindow: () -> Unit,
+) {
+    val items = buildList {
+        dischargeState.windows.forEach { w ->
+            add(WindowItem.Discharge(w, dischargeState.statuses[w.id]))
+        }
+        chargeState.windows.forEach { w ->
+            add(WindowItem.Charge(w, chargeState.statuses[w.id]))
+        }
+    }.sortedBy { it.startMinutes }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Schedule,
+                    contentDescription = null,
+                    tint = EnergyOrange,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Windows", style = MaterialTheme.typography.titleMedium)
+            }
+            IconButton(onClick = onCreateWindow, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Default.Add, contentDescription = "Add window", tint = EnergyOrange)
+            }
+        }
+
+        if (items.isEmpty() && !dischargeState.isLoading && !chargeState.isLoading) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = SurfaceContainer,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    "No windows configured",
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = OnSurfaceVariant,
+                )
+            }
+        }
+
+        items.forEach { item ->
+            when (item) {
+                is WindowItem.Discharge -> DischargeWindowCard(item.window, item.status, onDischargeWindowClick)
+                is WindowItem.Charge -> ChargeWindowCard(item.window, item.status, onChargeWindowClick)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChargeWindowCard(
+    window: ChargeWindow,
+    status: ChargeWindowStatus?,
+    onClick: (String) -> Unit,
+) {
+    val isActive = status != null && status.active
+    val alpha = if (window.enabled) 1f else 0.5f
 
     val borderAlpha = if (isActive) {
-        val infiniteTransition = rememberInfiniteTransition(label = "ramp-border")
+        val infiniteTransition = rememberInfiniteTransition(label = "charge-border")
         infiniteTransition.animateFloat(
             initialValue = 0.3f,
             targetValue = 1f,
@@ -589,12 +666,12 @@ private fun ChargeRampCard(state: ChargeRampState, onClick: () -> Unit) {
                 tween(1200, easing = FastOutSlowInEasing),
                 RepeatMode.Reverse,
             ),
-            label = "ramp-pulse",
+            label = "charge-pulse",
         ).value
     } else 0f
 
     Surface(
-        onClick = onClick,
+        onClick = { onClick(window.id) },
         shape = RoundedCornerShape(12.dp),
         color = SurfaceContainer,
         border = if (isActive) BorderStroke(1.5.dp, EnergyOrange.copy(alpha = borderAlpha)) else null,
@@ -608,46 +685,81 @@ private fun ChargeRampCard(state: ChargeRampState, onClick: () -> Unit) {
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        Icons.Default.WbSunny,
+                        Icons.Default.BatteryChargingFull,
                         contentDescription = null,
-                        tint = if (isActive) EnergyOrange else OnSurfaceVariant,
+                        tint = (if (isActive) EnergyOrange else BatteryGreen).copy(alpha = alpha),
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        "Solar Charge Ramp",
+                        window.name,
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
                     )
                 }
-                if (isActive) {
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = EnergyOrange.copy(alpha = 0.15f),
-                    ) {
-                        Text(
-                            "ACTIVE",
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = EnergyOrange,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (window.notify) {
+                        Icon(
+                            Icons.Default.Notifications,
+                            contentDescription = "Notifications enabled",
+                            tint = OnSurfaceVariant.copy(alpha = alpha),
+                            modifier = Modifier.size(14.dp),
                         )
                     }
-                } else {
-                    Text(
-                        "Idle",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = OnSurfaceVariant,
-                    )
+                    val statusColor = if (window.enabled) BatteryGreen else ErrorRed
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Canvas(modifier = Modifier.size(8.dp)) {
+                            drawCircle(color = statusColor)
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            if (window.enabled) "Enabled" else "Disabled",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = statusColor.copy(alpha = alpha),
+                        )
+                    }
+                    if (isActive) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = EnergyOrange.copy(alpha = 0.15f),
+                        ) {
+                            Text(
+                                "ACTIVE",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = EnergyOrange,
+                            )
+                        }
+                    }
                 }
             }
 
-            if (isActive) {
-                Spacer(Modifier.height(8.dp))
-                val status = state.status!!
-                val progress = status.progress ?: 0.0
+            Spacer(Modifier.height(6.dp))
 
-                // Progress bar
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    "${window.startTime} \u2192 ${window.peakTime} \u2192 ${window.endTime}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurfaceVariant.copy(alpha = alpha),
+                )
+                Text(
+                    "${window.startPower}W \u2192 ${window.peakPower}W \u2192 ${window.endPower}W",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurfaceVariant.copy(alpha = alpha),
+                )
+            }
+
+            if (isActive && status != null) {
+                Spacer(Modifier.height(6.dp))
+
                 LinearProgressIndicator(
-                    progress = { progress.toFloat() },
+                    progress = { (status.progress ?: 0.0).toFloat() },
                     modifier = Modifier.fillMaxWidth().height(4.dp),
                     color = EnergyOrange,
                     trackColor = OnSurfaceVariant.copy(alpha = 0.2f),
@@ -664,84 +776,16 @@ private fun ChargeRampCard(state: ChargeRampState, onClick: () -> Unit) {
                         style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
                         color = EnergyOrange,
                     )
-                    val totalMins = status.totalMinutes ?: 0
-                    val elapsedMins = status.elapsedMinutes ?: 0.0
-                    val remaining = (totalMins - elapsedMins).coerceAtLeast(0.0)
-                    val hours = (remaining / 60).toInt()
-                    val m = (remaining % 60).toInt()
+                    val mins = status.minutesRemaining ?: 0.0
+                    val hours = (mins / 60).toInt()
+                    val m = (mins % 60).toInt()
                     Text(
                         "${hours}h ${m}m remaining",
                         style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
                         color = EnergyOrange,
                     )
                 }
-            } else {
-                val config = state.config
-                if (config != null) {
-                    Spacer(Modifier.height(4.dp))
-                    val hours = config.durationMinutes / 60
-                    val mins = config.durationMinutes % 60
-                    val durationStr = if (mins > 0) "${hours}h ${mins}m" else "${hours}h"
-                    Text(
-                        "${config.initialPower}W \u2192 ${config.topPower}W \u2192 ${config.finalPower}W \u00b7 $durationStr",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = OnSurfaceVariant,
-                    )
-                }
             }
-        }
-    }
-}
-
-// ------------------------------------------------------------------
-// Discharge Windows list
-// ------------------------------------------------------------------
-
-@Composable
-private fun DischargeWindowsList(
-    state: DischargeWindowsState,
-    onWindowClick: (String) -> Unit,
-    onCreateWindow: () -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Default.Schedule,
-                    contentDescription = null,
-                    tint = EnergyOrange,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(Modifier.width(8.dp))
-                Text("Discharge Windows", style = MaterialTheme.typography.titleMedium)
-            }
-            IconButton(onClick = onCreateWindow, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Default.Add, contentDescription = "Add window", tint = EnergyOrange)
-            }
-        }
-
-        if (state.windows.isEmpty() && !state.isLoading) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = SurfaceContainer,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    "No discharge windows configured",
-                    modifier = Modifier.padding(16.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = OnSurfaceVariant,
-                )
-            }
-        }
-
-        state.windows.sortedBy { parseTimeToMinutes(it.startTime) }.forEach { window ->
-            val windowStatus = state.statuses[window.id]
-            DischargeWindowCard(window, windowStatus, onWindowClick)
         }
     }
 }

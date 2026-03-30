@@ -11,7 +11,8 @@ os.environ.setdefault("MOCK_MODE", "1")
 os.environ.setdefault("API_KEY", "test-key")
 
 import mock_clock
-from charge_ramp import config_store as ramp_config_store
+from charge_windows import config_store as charge_config_store
+from charge_windows.models import ChargeWindow
 from discharge import config_store
 from discharge.models import DischargeWindow
 
@@ -41,17 +42,13 @@ def config_path(tmp_path):
 
 
 @pytest.fixture()
-def ramp_config_path(tmp_path):
-    """Isolate charge ramp config_store to a temp directory."""
-    config_path = tmp_path / "charge_ramp_config.json"
-    active_path = tmp_path / "charge_ramp_active.json"
-    orig_config = ramp_config_store._cached_path
-    orig_active = ramp_config_store._cached_active_path
-    ramp_config_store._cached_path = config_path
-    ramp_config_store._cached_active_path = active_path
-    yield config_path
-    ramp_config_store._cached_path = orig_config
-    ramp_config_store._cached_active_path = orig_active
+def charge_config_path(tmp_path):
+    """Isolate charge windows config_store to a temp directory."""
+    path = tmp_path / "charge_windows.json"
+    original = charge_config_store._cached_path
+    charge_config_store._cached_path = path
+    yield path
+    charge_config_store._cached_path = original
 
 
 @pytest.fixture()
@@ -81,17 +78,40 @@ def sample_window():
 
 
 @pytest.fixture()
+def sample_charge_window():
+    """A sample charge window for testing."""
+    return ChargeWindow(
+        id="chrg0001",
+        name="Midday Charge",
+        start_time="10:00",
+        start_power=200,
+        peak_time="12:00",
+        peak_power=2500,
+        end_time="14:00",
+        end_power=200,
+        notify=True,
+        enabled=True,
+    )
+
+
+@pytest.fixture()
 def mock_notifications():
     """Patch all notification functions and return the mocks for assertion."""
     with (
         patch("notifications.notify_discharge_started") as started,
         patch("notifications.notify_discharge_update") as updated,
         patch("notifications.notify_discharge_stopped") as stopped,
+        patch("notifications.notify_charge_started") as charge_started,
+        patch("notifications.notify_charge_update") as charge_updated,
+        patch("notifications.notify_charge_stopped") as charge_stopped,
     ):
         yield {
             "started": started,
             "updated": updated,
             "stopped": stopped,
+            "charge_started": charge_started,
+            "charge_updated": charge_updated,
+            "charge_stopped": charge_stopped,
         }
 
 

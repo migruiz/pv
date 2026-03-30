@@ -14,8 +14,9 @@ from fastapi import FastAPI
 
 import notifications
 from config import BATTERY_DN, KEEP_ALIVE_INTERVAL, MOCK_MODE, MOCK_URL
-from charge_ramp.manager import ChargeRampManager
-from charge_ramp.router import router as ramp_router
+from charge_windows.router_control import router as charge_control_router
+from charge_windows.router_windows import router as charge_windows_router
+from charge_windows.scheduler import ChargeWindowScheduler
 from discharge.router_control import compat_router, router as control_router
 from discharge.router_windows import router as windows_router
 from discharge.scheduler import WindowScheduler
@@ -72,21 +73,24 @@ async def lifespan(app: FastAPI):
     app.state.scheduler = scheduler
     scheduler_task = asyncio.create_task(scheduler.run())
 
-    # Charge ramp manager
-    app.state.charge_ramp_task = None
-    app.state.charge_ramp_status = None
-    ramp_manager = ChargeRampManager(app.state, session, BATTERY_DN)
-    app.state.charge_ramp_manager = ramp_manager
-    await ramp_manager.check_resume()
+    # Charge window scheduler
+    app.state.charge_tasks = {}
+    app.state.charge_statuses = {}
+    app.state.charge_windows_changed = asyncio.Event()
+    charge_scheduler = ChargeWindowScheduler(app.state, session, BATTERY_DN)
+    app.state.charge_scheduler = charge_scheduler
+    charge_scheduler_task = asyncio.create_task(charge_scheduler.run())
 
     yield
 
     scheduler_task.cancel()
+    charge_scheduler_task.cancel()
     for task in app.state.discharge_tasks.values():
         if not task.done():
             task.cancel()
-    if app.state.charge_ramp_task and not app.state.charge_ramp_task.done():
-        app.state.charge_ramp_task.cancel()
+    for task in app.state.charge_tasks.values():
+        if not task.done():
+            task.cancel()
     if keep_alive_task:
         keep_alive_task.cancel()
     await session.shutdown()
@@ -99,7 +103,8 @@ app.include_router(dashboard.router)
 app.include_router(control_router)    # Static paths first (/status, /{id}/start, /{id}/stop)
 app.include_router(windows_router)    # Dynamic path last (/{window_id} CRUD)
 app.include_router(compat_router)
-app.include_router(ramp_router)
+app.include_router(charge_control_router)  # Static paths first (/status, /{id}/start, /{id}/stop)
+app.include_router(charge_windows_router)  # Dynamic path last (/{window_id} CRUD)
 
 # Mock-only endpoints for virtual clock control
 if MOCK_MODE:

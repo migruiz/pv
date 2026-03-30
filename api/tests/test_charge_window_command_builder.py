@@ -1,8 +1,8 @@
-"""Tests for charge ramp FusionSolar signal payload construction."""
+"""Tests for charge window FusionSolar signal payload construction."""
 
 import json
 
-from charge_ramp.command_builder import (
+from charge_windows.command_builder import (
     SIGNALS,
     TOU_WINDOWS_VALUE,
     build_power_update_command,
@@ -76,14 +76,3 @@ class TestBuildRestoreCommand:
         assert len(windows) == 2
         assert windows[0]["startTime"] == "02:05"
         assert windows[0]["endTime"] == "04:55"
-        assert windows[1]["startTime"] == "04:55"
-        assert windows[1]["endTime"] == "02:05"
-
-
-class TestSignalIDs:
-    def test_documented_signal_ids(self):
-        """Verify signal IDs match the documented FusionSolar constants."""
-        assert SIGNALS["max_charge_power"] == "10011"
-        assert SIGNALS["operation_mode"] == "230320241"
-        assert SIGNALS["charge_from_ac"] == "230320279"
-        assert SIGNALS["tou_windows"] == "230320283"

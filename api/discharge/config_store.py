@@ -142,4 +142,15 @@ def check_overlap(
         if candidate_minutes & existing_minutes:
             return w
 
+    # Cross-type: check against charge windows
+    from charge_windows import config_store as charge_store
+    from charge_windows.config_store import _window_minute_set as charge_minute_set
+
+    for w in charge_store.load_windows():
+        if not w.enabled:
+            continue
+        existing_minutes = charge_minute_set(w.start_time, w.end_time)
+        if candidate_minutes & existing_minutes:
+            return w
+
     return None

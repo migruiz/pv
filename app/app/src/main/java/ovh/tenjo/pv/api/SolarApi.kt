@@ -89,42 +89,68 @@ data class StopWindowResponse(
 )
 
 // ------------------------------------------------------------------
-// Data models — Charge Ramp
+// Data models — Charge Windows
 // ------------------------------------------------------------------
 
-data class ChargeRampConfig(
-    @SerializedName("duration_minutes") val durationMinutes: Int,
-    @SerializedName("initial_power") val initialPower: Int,
-    @SerializedName("top_power") val topPower: Int,
-    @SerializedName("final_power") val finalPower: Int,
+data class ChargeWindow(
+    val id: String,
+    val name: String,
+    @SerializedName("start_time") val startTime: String,
+    @SerializedName("start_power") val startPower: Int,
+    @SerializedName("peak_time") val peakTime: String,
+    @SerializedName("peak_power") val peakPower: Int,
+    @SerializedName("end_time") val endTime: String,
+    @SerializedName("end_power") val endPower: Int,
+    val notify: Boolean,
+    val enabled: Boolean,
 )
 
-data class ChargeRampConfigUpdate(
-    @SerializedName("duration_minutes") val durationMinutes: Int? = null,
-    @SerializedName("initial_power") val initialPower: Int? = null,
-    @SerializedName("top_power") val topPower: Int? = null,
-    @SerializedName("final_power") val finalPower: Int? = null,
+data class ChargeWindowCreate(
+    val name: String,
+    @SerializedName("start_time") val startTime: String,
+    @SerializedName("start_power") val startPower: Int,
+    @SerializedName("peak_time") val peakTime: String,
+    @SerializedName("peak_power") val peakPower: Int,
+    @SerializedName("end_time") val endTime: String,
+    @SerializedName("end_power") val endPower: Int,
+    val notify: Boolean = true,
+    val enabled: Boolean = true,
 )
 
-data class ChargeRampStatus(
+data class ChargeWindowUpdate(
+    val name: String? = null,
+    @SerializedName("start_time") val startTime: String? = null,
+    @SerializedName("start_power") val startPower: Int? = null,
+    @SerializedName("peak_time") val peakTime: String? = null,
+    @SerializedName("peak_power") val peakPower: Int? = null,
+    @SerializedName("end_time") val endTime: String? = null,
+    @SerializedName("end_power") val endPower: Int? = null,
+    val notify: Boolean? = null,
+    val enabled: Boolean? = null,
+)
+
+data class ChargeWindowStatus(
+    @SerializedName("window_id") val windowId: String,
+    @SerializedName("window_name") val windowName: String,
     val active: Boolean,
     @SerializedName("current_power_w") val currentPowerW: Int? = null,
+    val progress: Double? = null,
     @SerializedName("elapsed_minutes") val elapsedMinutes: Double? = null,
     @SerializedName("total_minutes") val totalMinutes: Int? = null,
-    val progress: Double? = null,
-    @SerializedName("start_time") val startTime: String? = null,
     @SerializedName("end_time") val endTime: String? = null,
+    @SerializedName("minutes_remaining") val minutesRemaining: Double? = null,
     @SerializedName("last_adjustment") val lastAdjustment: String? = null,
 )
 
-data class ChargeRampStartResponse(
+data class ChargeWindowStartResponse(
     val success: Boolean,
+    @SerializedName("window_id") val windowId: String? = null,
+    @SerializedName("window_name") val windowName: String? = null,
     @SerializedName("initial_power_w") val initialPowerW: Int? = null,
-    @SerializedName("duration_minutes") val durationMinutes: Int? = null,
     @SerializedName("end_time") val endTime: String? = null,
 )
 
-data class ChargeRampStopResponse(
+data class ChargeWindowStopResponse(
     val success: Boolean,
     val detail: String? = null,
 )
@@ -179,22 +205,39 @@ interface SolarApiService {
     @POST("batteries/{batteryId}/auto-discharge/stop")
     suspend fun stopAllDischarge(@Path("batteryId") batteryId: String): StopWindowResponse
 
-    // -- Charge Ramp --
+    // -- Charge Windows CRUD --
 
-    @GET("charge-ramp/config")
-    suspend fun getChargeRampConfig(): ChargeRampConfig
+    @GET("charge-windows")
+    suspend fun getChargeWindows(): List<ChargeWindow>
 
-    @PUT("charge-ramp/config")
-    suspend fun updateChargeRampConfig(@Body body: ChargeRampConfigUpdate): ChargeRampConfig
+    @GET("charge-windows/{windowId}")
+    suspend fun getChargeWindow(@Path("windowId") windowId: String): ChargeWindow
 
-    @GET("charge-ramp/status")
-    suspend fun getChargeRampStatus(): ChargeRampStatus
+    @POST("charge-windows")
+    suspend fun createChargeWindow(@Body body: ChargeWindowCreate): ChargeWindow
 
-    @POST("charge-ramp/start")
-    suspend fun startChargeRamp(): ChargeRampStartResponse
+    @PUT("charge-windows/{windowId}")
+    suspend fun updateChargeWindow(
+        @Path("windowId") windowId: String,
+        @Body body: ChargeWindowUpdate,
+    ): ChargeWindow
 
-    @POST("charge-ramp/stop")
-    suspend fun stopChargeRamp(): ChargeRampStopResponse
+    @DELETE("charge-windows/{windowId}")
+    suspend fun deleteChargeWindow(@Path("windowId") windowId: String)
+
+    // -- Charge Window Control --
+
+    @GET("charge-windows/status")
+    suspend fun getChargeWindowStatuses(): List<ChargeWindowStatus>
+
+    @GET("charge-windows/{windowId}/status")
+    suspend fun getChargeWindowStatus(@Path("windowId") windowId: String): ChargeWindowStatus
+
+    @POST("charge-windows/{windowId}/start")
+    suspend fun startChargeWindow(@Path("windowId") windowId: String): ChargeWindowStartResponse
+
+    @POST("charge-windows/{windowId}/stop")
+    suspend fun stopChargeWindow(@Path("windowId") windowId: String): ChargeWindowStopResponse
 }
 
 // ------------------------------------------------------------------
