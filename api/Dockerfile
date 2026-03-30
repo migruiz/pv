@@ -24,6 +24,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 # --- Application layer ---
 COPY main.py auth.py session.py mock_session.py config.py dependencies.py notifications.py mock_clock.py ./
 COPY discharge/ discharge/
+COPY charge_windows/ charge_windows/
 COPY routers/ routers/
 RUN uv sync --frozen --no-dev
 
