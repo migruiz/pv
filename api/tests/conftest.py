@@ -11,6 +11,7 @@ os.environ.setdefault("MOCK_MODE", "1")
 os.environ.setdefault("API_KEY", "test-key")
 
 import mock_clock
+from charge_ramp import config_store as ramp_config_store
 from discharge import config_store
 from discharge.models import DischargeWindow
 
@@ -37,6 +38,20 @@ def config_path(tmp_path):
     config_store._cached_path = path
     yield path
     config_store._cached_path = original
+
+
+@pytest.fixture()
+def ramp_config_path(tmp_path):
+    """Isolate charge ramp config_store to a temp directory."""
+    config_path = tmp_path / "charge_ramp_config.json"
+    active_path = tmp_path / "charge_ramp_active.json"
+    orig_config = ramp_config_store._cached_path
+    orig_active = ramp_config_store._cached_active_path
+    ramp_config_store._cached_path = config_path
+    ramp_config_store._cached_active_path = active_path
+    yield config_path
+    ramp_config_store._cached_path = orig_config
+    ramp_config_store._cached_active_path = orig_active
 
 
 @pytest.fixture()

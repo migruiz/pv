@@ -130,6 +130,40 @@ class SolarSession:
         r.raise_for_status()
         return r.json()
 
+    async def get_inverter_settings(self, device_dn: str) -> dict:
+        """Read current inverter settings from FusionSolar config signals."""
+        async with self._lock:
+            client = await self._get_or_create_client()
+            return await asyncio.to_thread(
+                self._get_inverter_settings_sync, client, device_dn,
+            )
+
+    def _get_inverter_settings_sync(self, client: FusionSolarClient, device_dn: str) -> dict:
+        """Fetch config signals and extract operation mode, AC charge, and max charge power."""
+        url = (
+            f"https://{self._subdomain}.fusionsolar.huawei.com"
+            "/rest/pvms/web/device/v1/deviceExt/get-config-signals"
+        )
+        r = client._session.get(url, params={"dn": device_dn})
+        r.raise_for_status()
+        data = r.json()
+
+        # Defaults
+        settings = {"operation_mode": 5, "charge_from_ac": 1, "max_charge_power": 2500}
+
+        # Parse signal values from the nested response
+        signal_map = {"230320241": "operation_mode", "230320279": "charge_from_ac", "10011": "max_charge_power"}
+        for group in data.get("data", []):
+            for signal in group.get("configSignalDisplayList", []):
+                signal_id = str(signal.get("id", ""))
+                if signal_id in signal_map:
+                    try:
+                        settings[signal_map[signal_id]] = int(float(signal.get("value", "0")))
+                    except (ValueError, TypeError):
+                        pass
+
+        return settings
+
     async def keep_alive(self):
         """Keep the FusionSolar session alive and persist cookies."""
         async with self._lock:

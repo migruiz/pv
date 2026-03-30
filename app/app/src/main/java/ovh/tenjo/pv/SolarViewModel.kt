@@ -8,6 +8,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import ovh.tenjo.pv.api.ChargeRampConfig
+import ovh.tenjo.pv.api.ChargeRampConfigUpdate
+import ovh.tenjo.pv.api.ChargeRampStatus
 import ovh.tenjo.pv.api.DischargeWindowCreate
 import ovh.tenjo.pv.api.DischargeWindowStatus
 import ovh.tenjo.pv.api.DischargeWindowUpdate
@@ -24,6 +27,9 @@ data class DashboardState(
     val energyTodayKwh: Double = 0.0,
     val consumedTodayKwh: Double = 0.0,
     val totalEnergyKwh: Double = 0.0,
+    val operationMode: Int = 5,
+    val chargeFromAc: Int = 1,
+    val maxChargePower: Int = 2500,
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
     val error: String? = null,
@@ -44,6 +50,16 @@ data class WindowDetailState(
     val message: String? = null,
 )
 
+data class ChargeRampState(
+    val config: ChargeRampConfig? = null,
+    val status: ChargeRampStatus? = null,
+    val isLoading: Boolean = false,
+    val isSaving: Boolean = false,
+    val isStarting: Boolean = false,
+    val isStopping: Boolean = false,
+    val message: String? = null,
+)
+
 class SolarViewModel : ViewModel() {
 
     private val api = SolarApiClient.service
@@ -57,10 +73,14 @@ class SolarViewModel : ViewModel() {
     private val _windowDetail = MutableStateFlow(WindowDetailState())
     val windowDetail: StateFlow<WindowDetailState> = _windowDetail.asStateFlow()
 
+    private val _chargeRamp = MutableStateFlow(ChargeRampState())
+    val chargeRamp: StateFlow<ChargeRampState> = _chargeRamp.asStateFlow()
+
 
     init {
         refreshDashboard()
         loadWindows()
+        loadChargeRamp()
         startAutoRefresh()
     }
 
@@ -95,6 +115,9 @@ class SolarViewModel : ViewModel() {
                     energyTodayKwh = d.energyTodayKwh,
                     consumedTodayKwh = d.dischargedTodayKwh + d.energyTodayKwh,
                     totalEnergyKwh = d.totalEnergyKwh,
+                    operationMode = d.operationMode,
+                    chargeFromAc = d.chargeFromAc,
+                    maxChargePower = d.maxChargePower,
                     isLoading = false,
                 )
             } catch (e: Exception) {
@@ -227,6 +250,92 @@ class SolarViewModel : ViewModel() {
         _windowDetail.value = _windowDetail.value.copy(message = null)
     }
 
+    // -- Charge Ramp --
+
+    fun loadChargeRamp() {
+        viewModelScope.launch {
+            _chargeRamp.value = _chargeRamp.value.copy(isLoading = true)
+            try {
+                val config = api.getChargeRampConfig()
+                val status = api.getChargeRampStatus()
+                _chargeRamp.value = _chargeRamp.value.copy(
+                    config = config,
+                    status = status,
+                    isLoading = false,
+                )
+            } catch (e: Exception) {
+                _chargeRamp.value = _chargeRamp.value.copy(
+                    isLoading = false,
+                    message = "Error: ${e.message}",
+                )
+            }
+        }
+    }
+
+    fun loadChargeRampStatus() {
+        viewModelScope.launch {
+            try {
+                val status = api.getChargeRampStatus()
+                _chargeRamp.value = _chargeRamp.value.copy(status = status)
+            } catch (_: Exception) { }
+        }
+    }
+
+    fun updateChargeRampConfig(update: ChargeRampConfigUpdate) {
+        viewModelScope.launch {
+            _chargeRamp.value = _chargeRamp.value.copy(isSaving = true, message = null)
+            try {
+                val config = api.updateChargeRampConfig(update)
+                _chargeRamp.value = _chargeRamp.value.copy(
+                    config = config,
+                    isSaving = false,
+                    message = "Saved",
+                )
+            } catch (e: Exception) {
+                _chargeRamp.value = _chargeRamp.value.copy(
+                    isSaving = false,
+                    message = "Error: ${e.message}",
+                )
+            }
+        }
+    }
+
+    fun startChargeRamp() {
+        viewModelScope.launch {
+            _chargeRamp.value = _chargeRamp.value.copy(isStarting = true, message = null)
+            try {
+                api.startChargeRamp()
+                _chargeRamp.value = _chargeRamp.value.copy(isStarting = false, message = "Ramp started")
+                loadChargeRampStatus()
+            } catch (e: Exception) {
+                _chargeRamp.value = _chargeRamp.value.copy(
+                    isStarting = false,
+                    message = "Error: ${e.message}",
+                )
+            }
+        }
+    }
+
+    fun stopChargeRamp() {
+        viewModelScope.launch {
+            _chargeRamp.value = _chargeRamp.value.copy(isStopping = true, message = null)
+            try {
+                api.stopChargeRamp()
+                _chargeRamp.value = _chargeRamp.value.copy(isStopping = false, message = "Ramp stopped")
+                loadChargeRampStatus()
+            } catch (e: Exception) {
+                _chargeRamp.value = _chargeRamp.value.copy(
+                    isStopping = false,
+                    message = "Error: ${e.message}",
+                )
+            }
+        }
+    }
+
+    fun clearChargeRampMessage() {
+        _chargeRamp.value = _chargeRamp.value.copy(message = null)
+    }
+
     // -- Auto-refresh --
 
     private fun startAutoRefresh() {
@@ -235,6 +344,7 @@ class SolarViewModel : ViewModel() {
                 delay(20_000)
                 loadDashboard(showLoading = false)
                 loadStatuses()
+                loadChargeRampStatus()
             }
         }
     }

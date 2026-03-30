@@ -2,6 +2,7 @@ import type { SimulatorState } from "../types";
 import { PvSlider } from "./PvSlider";
 import { HomeConsumption } from "./HomeConsumption";
 import { BatteryControl } from "./BatteryControl";
+import { InverterSettings } from "./InverterSettings";
 import { GridDisplay } from "./GridDisplay";
 import { StatsPanel } from "./StatsPanel";
 import { CommandLog } from "./CommandLog";
@@ -40,6 +41,14 @@ export function ControlPanel({ state, onUpdate, onReset }: Props) {
             onSocChange={(v) => onUpdate({ battery_soc: v })}
             onPowerChange={(v) => onUpdate({ battery_power_kw: v })}
             onDirectionChange={(v) => onUpdate({ battery_charging: v })}
+          />
+          <InverterSettings
+            operationMode={state.operation_mode}
+            chargeFromAc={state.charge_from_ac}
+            maxChargePower={state.max_charge_power}
+            onOperationModeChange={(v) => onUpdate({ operation_mode: v })}
+            onChargeFromAcChange={(v) => onUpdate({ charge_from_ac: v })}
+            onMaxChargePowerChange={(v) => onUpdate({ max_charge_power: v })}
           />
         </div>
 

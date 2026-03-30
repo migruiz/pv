@@ -4,6 +4,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,6 +18,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -31,6 +33,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import ovh.tenjo.pv.ChargeRampState
 import ovh.tenjo.pv.DashboardState
 import ovh.tenjo.pv.DischargeWindowsState
 import ovh.tenjo.pv.SolarViewModel
@@ -45,9 +48,12 @@ fun DashboardScreen(
     modifier: Modifier = Modifier,
     onWindowClick: (String) -> Unit = {},
     onCreateWindow: () -> Unit = {},
+    onChargeRampClick: () -> Unit = {},
 ) {
     val state by viewModel.dashboard.collectAsState()
     val windowsState by viewModel.windows.collectAsState()
+    val chargeRampState by viewModel.chargeRamp.collectAsState()
+    var showInverterInfo by remember { mutableStateOf(false) }
 
     PullToRefreshBox(
         isRefreshing = state.isRefreshing,
@@ -71,7 +77,7 @@ fun DashboardScreen(
                 ErrorCard(state.error!!) { viewModel.refreshDashboard() }
             } else {
                 // -- Energy Flow --
-                EnergyFlowSection(state)
+                EnergyFlowSection(state, onInverterClick = { showInverterInfo = true })
 
                 Spacer(Modifier.height(32.dp))
 
@@ -80,10 +86,20 @@ fun DashboardScreen(
 
                 Spacer(Modifier.height(24.dp))
 
+                // -- Charge Ramp --
+                ChargeRampCard(chargeRampState, onChargeRampClick)
+
+                Spacer(Modifier.height(24.dp))
+
                 // -- Discharge Windows --
                 DischargeWindowsList(windowsState, onWindowClick, onCreateWindow)
             }
         }
+    }
+
+    // Inverter info dialog
+    if (showInverterInfo) {
+        InverterInfoDialog(state) { showInverterInfo = false }
     }
 }
 
@@ -92,7 +108,7 @@ fun DashboardScreen(
 // ------------------------------------------------------------------
 
 @Composable
-private fun EnergyFlowSection(state: DashboardState) {
+private fun EnergyFlowSection(state: DashboardState, onInverterClick: () -> Unit = {}) {
     val infiniteTransition = rememberInfiniteTransition(label = "flow")
 
     // Elapsed animation time — increases monotonically, no global wrap
@@ -297,6 +313,22 @@ private fun EnergyFlowSection(state: DashboardState) {
                 color = GridBlue,
                 valuePosition = ValuePosition.RIGHT,
             )
+            // Inverter — Center (tappable)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(44.dp)
+                    .background(SurfaceContainerHigh, RoundedCornerShape(12.dp))
+                    .clickable { onInverterClick() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.Memory,
+                    contentDescription = "Inverter settings",
+                    tint = OnSurfaceVariant,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
         }
     }
 }
@@ -477,6 +509,186 @@ private fun StatCard(
             }
             Spacer(Modifier.height(4.dp))
             Text(label, style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
+        }
+    }
+}
+
+// ------------------------------------------------------------------
+// Inverter info dialog
+// ------------------------------------------------------------------
+
+@Composable
+private fun InverterInfoDialog(state: DashboardState, onDismiss: () -> Unit) {
+    val modeText = when (state.operationMode) {
+        2 -> "Maximum self-consumption"
+        4 -> "Fully fed to grid"
+        5 -> "TOU"
+        6 -> "Third-party dispatch"
+        else -> "Unknown (${state.operationMode})"
+    }
+    val acChargeText = if (state.chargeFromAc == 1) "Enabled" else "Disabled"
+    val modeColor = if (state.operationMode == 5) BatteryGreen else EnergyOrange
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                Icons.Default.Memory,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        },
+        title = { Text("Inverter Settings") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                InverterInfoRow("Operation Mode", modeText, modeColor)
+                InverterInfoRow(
+                    "Charge from AC",
+                    acChargeText,
+                    if (state.chargeFromAc == 1) BatteryGreen else EnergyOrange,
+                )
+                InverterInfoRow("Max Charge Power", "${state.maxChargePower}W", OnSurfaceVariant)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
+}
+
+@Composable
+private fun InverterInfoRow(label: String, value: String, valueColor: Color) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = OnSurfaceVariant)
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+            color = valueColor,
+        )
+    }
+}
+
+// ------------------------------------------------------------------
+// Charge Ramp card
+// ------------------------------------------------------------------
+
+@Composable
+private fun ChargeRampCard(state: ChargeRampState, onClick: () -> Unit) {
+    val isActive = state.status?.active == true
+
+    val borderAlpha = if (isActive) {
+        val infiniteTransition = rememberInfiniteTransition(label = "ramp-border")
+        infiniteTransition.animateFloat(
+            initialValue = 0.3f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                tween(1200, easing = FastOutSlowInEasing),
+                RepeatMode.Reverse,
+            ),
+            label = "ramp-pulse",
+        ).value
+    } else 0f
+
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = SurfaceContainer,
+        border = if (isActive) BorderStroke(1.5.dp, EnergyOrange.copy(alpha = borderAlpha)) else null,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.WbSunny,
+                        contentDescription = null,
+                        tint = if (isActive) EnergyOrange else OnSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Solar Charge Ramp",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                    )
+                }
+                if (isActive) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = EnergyOrange.copy(alpha = 0.15f),
+                    ) {
+                        Text(
+                            "ACTIVE",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = EnergyOrange,
+                        )
+                    }
+                } else {
+                    Text(
+                        "Idle",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = OnSurfaceVariant,
+                    )
+                }
+            }
+
+            if (isActive) {
+                Spacer(Modifier.height(8.dp))
+                val status = state.status!!
+                val progress = status.progress ?: 0.0
+
+                // Progress bar
+                LinearProgressIndicator(
+                    progress = { progress.toFloat() },
+                    modifier = Modifier.fillMaxWidth().height(4.dp),
+                    color = EnergyOrange,
+                    trackColor = OnSurfaceVariant.copy(alpha = 0.2f),
+                )
+
+                Spacer(Modifier.height(6.dp))
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        "${status.currentPowerW ?: 0}W",
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                        color = EnergyOrange,
+                    )
+                    val totalMins = status.totalMinutes ?: 0
+                    val elapsedMins = status.elapsedMinutes ?: 0.0
+                    val remaining = (totalMins - elapsedMins).coerceAtLeast(0.0)
+                    val hours = (remaining / 60).toInt()
+                    val m = (remaining % 60).toInt()
+                    Text(
+                        "${hours}h ${m}m remaining",
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                        color = EnergyOrange,
+                    )
+                }
+            } else {
+                val config = state.config
+                if (config != null) {
+                    Spacer(Modifier.height(4.dp))
+                    val hours = config.durationMinutes / 60
+                    val mins = config.durationMinutes % 60
+                    val durationStr = if (mins > 0) "${hours}h ${mins}m" else "${hours}h"
+                    Text(
+                        "${config.initialPower}W \u2192 ${config.topPower}W \u2192 ${config.finalPower}W \u00b7 $durationStr",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnSurfaceVariant,
+                    )
+                }
+            }
         }
     }
 }

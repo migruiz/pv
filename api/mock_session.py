@@ -45,7 +45,17 @@ class MockSession:
                 r = await client.get(f"{self._url}/mock/plant-flow/{plant_id}")
                 return r.json()
 
+            if method_name == "get_inverter_settings":
+                r = await client.get(f"{self._url}/mock/inverter-settings")
+                return _AttrDict(r.json())
+
             raise ValueError(f"MockSession: unknown method {method_name!r}")
+
+    async def get_inverter_settings(self, device_dn: str) -> dict:
+        """Read inverter settings from the mock server."""
+        async with httpx.AsyncClient() as client:
+            r = await client.get(f"{self._url}/mock/inverter-settings")
+            return r.json()
 
     async def post_config_signals(self, device_dn: str, change_values: list[dict]):
         async with httpx.AsyncClient() as client:

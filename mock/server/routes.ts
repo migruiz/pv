@@ -115,6 +115,15 @@ router.get("/mock/plant-flow/:id", (_req, res) => {
   res.json({ data: { flow: { nodes, links } } });
 });
 
+router.get("/mock/inverter-settings", (_req, res) => {
+  const s = getState();
+  res.json({
+    operation_mode: s.operation_mode,
+    charge_from_ac: s.charge_from_ac,
+    max_charge_power: s.max_charge_power,
+  });
+});
+
 router.post("/mock/config-signals", (req, res) => {
   const { dn, changeValues } = req.body;
   const result = handleConfigSignals(dn, changeValues);

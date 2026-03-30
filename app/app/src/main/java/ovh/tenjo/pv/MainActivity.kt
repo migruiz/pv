@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.firebase.messaging.FirebaseMessaging
 import ovh.tenjo.pv.api.SolarApiClient
+import ovh.tenjo.pv.ui.ChargeRampScreen
 import ovh.tenjo.pv.ui.CreateWindowDialog
 import ovh.tenjo.pv.ui.DashboardScreen
 import ovh.tenjo.pv.ui.DischargeWindowDetailScreen
@@ -56,13 +57,20 @@ class MainActivity : ComponentActivity() {
                 val solarViewModel: SolarViewModel = viewModel()
                 var selectedWindowId by remember { mutableStateOf<String?>(null) }
                 var showCreateDialog by remember { mutableStateOf(false) }
+                var showChargeRamp by remember { mutableStateOf(false) }
 
-                BackHandler(enabled = selectedWindowId != null) {
-                    selectedWindowId = null
+                BackHandler(enabled = selectedWindowId != null || showChargeRamp) {
+                    if (showChargeRamp) showChargeRamp = false
+                    else selectedWindowId = null
                 }
 
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    if (selectedWindowId != null) {
+                    if (showChargeRamp) {
+                        ChargeRampScreen(
+                            viewModel = solarViewModel,
+                            onBack = { showChargeRamp = false },
+                        )
+                    } else if (selectedWindowId != null) {
                         DischargeWindowDetailScreen(
                             windowId = selectedWindowId!!,
                             viewModel = solarViewModel,
@@ -77,6 +85,10 @@ class MainActivity : ComponentActivity() {
                             selectedWindowId = it
                         },
                             onCreateWindow = { showCreateDialog = true },
+                            onChargeRampClick = {
+                                solarViewModel.clearChargeRampMessage()
+                                showChargeRamp = true
+                            },
                         )
                     }
 

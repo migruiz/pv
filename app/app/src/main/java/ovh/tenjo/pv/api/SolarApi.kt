@@ -20,6 +20,9 @@ data class DashboardData(
     @SerializedName("energy_today_kwh") val energyTodayKwh: Double,
     @SerializedName("discharged_today_kwh") val dischargedTodayKwh: Double,
     @SerializedName("total_energy_kwh") val totalEnergyKwh: Double,
+    @SerializedName("operation_mode") val operationMode: Int = 5,
+    @SerializedName("charge_from_ac") val chargeFromAc: Int = 1,
+    @SerializedName("max_charge_power") val maxChargePower: Int = 2500,
 )
 
 data class HealthResponse(
@@ -86,6 +89,47 @@ data class StopWindowResponse(
 )
 
 // ------------------------------------------------------------------
+// Data models — Charge Ramp
+// ------------------------------------------------------------------
+
+data class ChargeRampConfig(
+    @SerializedName("duration_minutes") val durationMinutes: Int,
+    @SerializedName("initial_power") val initialPower: Int,
+    @SerializedName("top_power") val topPower: Int,
+    @SerializedName("final_power") val finalPower: Int,
+)
+
+data class ChargeRampConfigUpdate(
+    @SerializedName("duration_minutes") val durationMinutes: Int? = null,
+    @SerializedName("initial_power") val initialPower: Int? = null,
+    @SerializedName("top_power") val topPower: Int? = null,
+    @SerializedName("final_power") val finalPower: Int? = null,
+)
+
+data class ChargeRampStatus(
+    val active: Boolean,
+    @SerializedName("current_power_w") val currentPowerW: Int? = null,
+    @SerializedName("elapsed_minutes") val elapsedMinutes: Double? = null,
+    @SerializedName("total_minutes") val totalMinutes: Int? = null,
+    val progress: Double? = null,
+    @SerializedName("start_time") val startTime: String? = null,
+    @SerializedName("end_time") val endTime: String? = null,
+    @SerializedName("last_adjustment") val lastAdjustment: String? = null,
+)
+
+data class ChargeRampStartResponse(
+    val success: Boolean,
+    @SerializedName("initial_power_w") val initialPowerW: Int? = null,
+    @SerializedName("duration_minutes") val durationMinutes: Int? = null,
+    @SerializedName("end_time") val endTime: String? = null,
+)
+
+data class ChargeRampStopResponse(
+    val success: Boolean,
+    val detail: String? = null,
+)
+
+// ------------------------------------------------------------------
 // Retrofit interface
 // ------------------------------------------------------------------
 
@@ -134,6 +178,23 @@ interface SolarApiService {
     // Backward-compatible: stop all active windows
     @POST("batteries/{batteryId}/auto-discharge/stop")
     suspend fun stopAllDischarge(@Path("batteryId") batteryId: String): StopWindowResponse
+
+    // -- Charge Ramp --
+
+    @GET("charge-ramp/config")
+    suspend fun getChargeRampConfig(): ChargeRampConfig
+
+    @PUT("charge-ramp/config")
+    suspend fun updateChargeRampConfig(@Body body: ChargeRampConfigUpdate): ChargeRampConfig
+
+    @GET("charge-ramp/status")
+    suspend fun getChargeRampStatus(): ChargeRampStatus
+
+    @POST("charge-ramp/start")
+    suspend fun startChargeRamp(): ChargeRampStartResponse
+
+    @POST("charge-ramp/stop")
+    suspend fun stopChargeRamp(): ChargeRampStopResponse
 }
 
 // ------------------------------------------------------------------

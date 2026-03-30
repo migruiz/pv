@@ -98,6 +98,12 @@ async def get_dashboard(session: SolarSession = Depends(get_session)):
             flow_data = await session.call("get_plant_flow", plant_id)
             flow_values = _parse_flow(flow_data)
 
+        # Inverter settings (operation mode, AC charge, max charge power)
+        try:
+            inv = await session.get_inverter_settings(BATTERY_DN)
+        except Exception:
+            inv = {"operation_mode": 5, "charge_from_ac": 1, "max_charge_power": 2500}
+
         return {
             "pv_kw": flow_values.get("pv_kw", ps.current_power_kw),
             "battery_soc": flow_values.get("battery_soc", b.state_of_charge),
@@ -109,6 +115,9 @@ async def get_dashboard(session: SolarSession = Depends(get_session)):
             "energy_today_kwh": ps.energy_today_kwh,
             "discharged_today_kwh": b.total_discharged_today_kwh,
             "total_energy_kwh": ps.energy_kwh,
+            "operation_mode": inv.get("operation_mode", 5),
+            "charge_from_ac": inv.get("charge_from_ac", 1),
+            "max_charge_power": inv.get("max_charge_power", 2500),
         }
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))

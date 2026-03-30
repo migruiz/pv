@@ -44,3 +44,7 @@ class FakeAppState:
         self.discharge_tasks: dict = {}
         self.discharge_statuses: dict = {}
         self.windows_changed = asyncio.Event()
+        # Charge ramp fields
+        self.charge_ramp_task = None
+        self.charge_ramp_status = None
+        self.charge_ramp_manager = None

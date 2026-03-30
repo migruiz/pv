@@ -12,5 +12,8 @@ export interface SimulatorState {
   forced_mode: number;
   forced_power_kw: number;
   forced_duration_min: number;
+  operation_mode: number;
+  charge_from_ac: number;
+  max_charge_power: number;
   command_log: { timestamp: string; signals: Record<string, string> }[];
 }

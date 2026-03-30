@@ -27,6 +27,11 @@ export interface SimulatorState {
   forced_power_kw: number;
   forced_duration_min: number;
 
+  // Inverter settings (set by Python API or UI)
+  operation_mode: number; // 2=Max self-consumption, 5=TOU
+  charge_from_ac: number; // 0=Disabled, 1=Enabled
+  max_charge_power: number; // 200-2500 W
+
   // Command log
   command_log: CommandEntry[];
 }
@@ -46,6 +51,9 @@ const DEFAULT_STATE: Omit<SimulatorState, "grid_kw" | "grid_importing"> = {
   forced_mode: 0,
   forced_power_kw: 0,
   forced_duration_min: 0,
+  operation_mode: 5,
+  charge_from_ac: 1,
+  max_charge_power: 2500,
   command_log: [],
 };
 
@@ -133,6 +141,10 @@ const SIGNAL_NAMES: Record<string, string> = {
   "230320259": "forced_power_kw",
   "230320257": "setting_mode",
   "230320281": "forced_period_min",
+  "10011": "max_charge_power",
+  "230320241": "operation_mode",
+  "230320279": "charge_from_ac",
+  "230320283": "tou_windows",
 };
 
 // ---------------------------------------------------------------------------
@@ -192,6 +204,17 @@ export function handleConfigSignals(
         break;
       case "230320281": // forced_period_min
         state.forced_duration_min = parseInt(value);
+        break;
+      case "10011": // max_charge_power
+        state.max_charge_power = parseInt(value);
+        break;
+      case "230320241": // operation_mode
+        state.operation_mode = parseInt(value);
+        break;
+      case "230320279": // charge_from_ac
+        state.charge_from_ac = parseInt(value);
+        break;
+      case "230320283": // tou_windows (logged but not simulated)
         break;
     }
   }
