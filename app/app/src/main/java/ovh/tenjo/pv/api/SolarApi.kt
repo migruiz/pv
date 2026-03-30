@@ -64,9 +64,9 @@ data class DischargeWindowStatus(
     val active: Boolean,
     @SerializedName("current_soc") val currentSoc: Double? = null,
     @SerializedName("discharge_power_kw") val dischargePowerKw: Double? = null,
+    @SerializedName("remaining_energy_kwh") val remainingEnergyKwh: Double? = null,
     @SerializedName("target_time") val targetTime: String? = null,
     @SerializedName("minutes_remaining") val minutesRemaining: Double? = null,
-    @SerializedName("hours_remaining") val hoursRemaining: Double? = null,
     @SerializedName("last_adjustment") val lastAdjustment: String? = null,
 )
 

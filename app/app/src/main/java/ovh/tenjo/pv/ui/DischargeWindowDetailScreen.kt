@@ -1,7 +1,6 @@
 package ovh.tenjo.pv.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -349,19 +348,19 @@ private fun ConfigSection(
 
             // Start / End / Duration — tappable fields
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TimeField(
+                ReadOnlyTimeField(
                     label = "Start",
                     value = startTime,
                     onClick = onStartTimeClick,
                     modifier = Modifier.weight(1f),
                 )
-                TimeField(
+                ReadOnlyTimeField(
                     label = "End",
                     value = endTime,
                     onClick = onEndTimeClick,
                     modifier = Modifier.weight(1f),
                 )
-                TimeField(
+                ReadOnlyTimeField(
                     label = "Duration",
                     value = "${durationHours}h ${durationMins}m",
                     onClick = onDurationClick,
@@ -413,29 +412,6 @@ private fun ConfigSection(
             }
         }
     }
-}
-
-@Composable
-private fun TimeField(
-    label: String,
-    value: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = {},
-        label = { Text(label) },
-        readOnly = true,
-        singleLine = true,
-        modifier = modifier.clickable { onClick() },
-        enabled = false,
-        colors = OutlinedTextFieldDefaults.colors(
-            disabledTextColor = MaterialTheme.colorScheme.onSurface,
-            disabledBorderColor = MaterialTheme.colorScheme.outline,
-            disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        ),
-    )
 }
 
 // ------------------------------------------------------------------

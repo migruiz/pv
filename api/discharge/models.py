@@ -47,9 +47,9 @@ class WindowStatus(BaseModel):
     active: bool
     current_soc: Optional[float] = None
     discharge_power_kw: Optional[float] = None
+    remaining_energy_kwh: Optional[float] = None
     target_time: Optional[str] = None
     minutes_remaining: Optional[float] = None
-    hours_remaining: Optional[float] = None
     last_adjustment: Optional[str] = None
 
 
@@ -93,6 +93,5 @@ def build_status_dict(
         "remaining_energy_kwh": round(energy_kwh, 3),
         "target_time": end_time_iso,
         "minutes_remaining": round(minutes_left, 1),
-        "hours_remaining": round(minutes_left / 60, 2),
         "last_adjustment": now_iso,
     }

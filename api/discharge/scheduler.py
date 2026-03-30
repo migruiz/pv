@@ -89,14 +89,24 @@ class WindowScheduler:
 
     @staticmethod
     def _compute_window_times(window: DischargeWindow, now: datetime) -> tuple[datetime, datetime]:
-        """Compute the next (start_dt, end_dt) for a window relative to now."""
+        """Compute the current or next (start_dt, end_dt) for a window.
+
+        Handles midnight-crossing windows: if now is in the post-midnight
+        portion (e.g., 01:00 for a 22:00-02:00 window), returns yesterday's
+        start and today's end so the window is recognised as active.
+        """
         h, m = window.start_time.split(":")
         start_dt = now.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
-
-        # If start time has already passed today, check if window is still active
         end_dt = start_dt + timedelta(minutes=window.duration_minutes)
+
         if end_dt <= now:
-            # Window is fully past today, schedule for tomorrow
+            # Window fully past today — but check if yesterday's instance
+            # crosses midnight and is still active now
+            yesterday_start = start_dt - timedelta(days=1)
+            yesterday_end = yesterday_start + timedelta(minutes=window.duration_minutes)
+            if yesterday_start <= now < yesterday_end:
+                return yesterday_start, yesterday_end
+            # Otherwise schedule for tomorrow
             start_dt += timedelta(days=1)
             end_dt = start_dt + timedelta(minutes=window.duration_minutes)
 
@@ -112,17 +122,7 @@ class WindowScheduler:
         for w in config_store.load_windows():
             if not w.enabled:
                 continue
-            h, m = w.start_time.split(":")
-            start_dt = now.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
-            end_dt = start_dt + timedelta(minutes=w.duration_minutes)
-
-            # Handle midnight crossing: if end is before start, it started yesterday
-            if end_dt < start_dt:
-                # Window crosses midnight — check if we're in the post-midnight portion
-                if now.hour < int(h):
-                    start_dt -= timedelta(days=1)
-                    end_dt = start_dt + timedelta(minutes=w.duration_minutes)
-
+            start_dt, end_dt = self._compute_window_times(w, now)
             if start_dt <= now < end_dt:
                 logger.info(
                     "Resuming mid-window '%s' (%.0f min remaining)",

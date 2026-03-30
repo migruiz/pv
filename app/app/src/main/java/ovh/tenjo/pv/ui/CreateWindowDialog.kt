@@ -1,6 +1,5 @@
 package ovh.tenjo.pv.ui
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -168,20 +167,3 @@ fun CreateWindowDialog(
     }
 }
 
-@Composable
-private fun ReadOnlyTimeField(label: String, value: String, onClick: () -> Unit, modifier: Modifier) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = {},
-        label = { Text(label) },
-        readOnly = true,
-        singleLine = true,
-        modifier = modifier.clickable { onClick() },
-        enabled = false,
-        colors = OutlinedTextFieldDefaults.colors(
-            disabledTextColor = MaterialTheme.colorScheme.onSurface,
-            disabledBorderColor = MaterialTheme.colorScheme.outline,
-            disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        ),
-    )
-}
