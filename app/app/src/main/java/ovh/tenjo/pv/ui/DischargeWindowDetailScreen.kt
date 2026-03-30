@@ -51,6 +51,7 @@ fun DischargeWindowDetailScreen(
 ) {
     val windowsState by viewModel.windows.collectAsState()
     val detailState by viewModel.windowDetail.collectAsState()
+    val dashboardState by viewModel.dashboard.collectAsState()
     val window = windowsState.windows.find { it.id == windowId }
     val status = windowsState.statuses[windowId]
 
@@ -146,6 +147,17 @@ fun DischargeWindowDetailScreen(
                 onNotifyChange = { notify = it },
                 enabled = enabled,
                 onEnabledChange = { enabled = it },
+            )
+
+            // -- Estimated energy --
+            val estKwh = estimateDischargeEnergy(dashboardState.batterySoc, targetSoc.toDouble())
+            Text(
+                "Estimated discharge: %.2f kWh (from %.0f%% to %.0f%%)".format(
+                    estKwh, dashboardState.batterySoc, targetSoc.toDouble(),
+                ),
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                color = EnergyOrange,
+                modifier = Modifier.fillMaxWidth(),
             )
 
             // -- Save button --

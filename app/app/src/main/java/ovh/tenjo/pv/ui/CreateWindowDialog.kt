@@ -52,6 +52,7 @@ fun CreateWindowDialog(
 
     val detailState by viewModel.windowDetail.collectAsState()
     val chargeDetailState by viewModel.chargeWindowDetail.collectAsState()
+    val dashboardState by viewModel.dashboard.collectAsState()
 
     LaunchedEffect(detailState.message) {
         if (detailState.message == "Window created") onDismiss()
@@ -145,6 +146,15 @@ fun CreateWindowDialog(
                             colors = SwitchDefaults.colors(checkedTrackColor = EnergyOrange),
                         )
                     }
+
+                    val estDischarge = estimateDischargeEnergy(dashboardState.batterySoc, dTargetSoc.toDouble())
+                    Text(
+                        "Estimated discharge: %.2f kWh (from %.0f%% to %.0f%%)".format(
+                            estDischarge, dashboardState.batterySoc, dTargetSoc.toDouble(),
+                        ),
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                        color = EnergyOrange,
+                    )
                 } else {
                     // -- Charge form --
                     OutlinedTextField(
@@ -238,6 +248,13 @@ fun CreateWindowDialog(
                             colors = SwitchDefaults.colors(checkedTrackColor = EnergyOrange),
                         )
                     }
+
+                    val estCharge = estimateChargeEnergy(cStartTime, cStartPower, cPeakTime, cPeakPower, cEndTime, cEndPower)
+                    Text(
+                        "Estimated charge: %.2f kWh".format(estCharge),
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                        color = BatteryGreen,
+                    )
                 }
 
                 // Error message

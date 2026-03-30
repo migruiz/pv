@@ -33,6 +33,17 @@ import kotlin.math.cos
 import kotlin.math.PI
 import kotlin.math.roundToInt
 
+/** Check if current time is between start and end (handling midnight crossing). */
+private fun canStartChargeWindow(startTime: String, endTime: String): Boolean {
+    val now = Calendar.getInstance()
+    val nowMin = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
+    val startMin = parseTimeToMinutes(startTime)
+    var endMin = parseTimeToMinutes(endTime)
+    if (endMin <= startMin) endMin += 1440  // midnight crossing
+    val nowAdj = if (nowMin < startMin && endMin > 1440) nowMin + 1440 else nowMin
+    return nowAdj in startMin until endMin
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChargeWindowDetailScreen(
@@ -129,6 +140,15 @@ fun ChargeWindowDetailScreen(
                 startTime = startTime,
                 peakTime = peakTime,
                 endTime = endTime,
+            )
+
+            // -- Estimated energy --
+            val estKwh = estimateChargeEnergy(startTime, startPower, peakTime, peakPower, endTime, endPower)
+            Text(
+                "Estimated charge: %.2f kWh".format(estKwh),
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                color = BatteryGreen,
+                modifier = Modifier.fillMaxWidth(),
             )
 
             // -- Configuration section --
@@ -296,11 +316,12 @@ fun ChargeWindowDetailScreen(
             }
 
             // -- Start/Stop button --
+            val canStart = canStartChargeWindow(startTime, endTime)
             Button(
                 onClick = { showConfirmDialog = true },
                 modifier = Modifier.fillMaxWidth().height(44.dp),
                 shape = RoundedCornerShape(50),
-                enabled = !detailState.isStarting && !detailState.isStopping,
+                enabled = (isActive || canStart) && !detailState.isStarting && !detailState.isStopping,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (isActive) MaterialTheme.colorScheme.error else BatteryGreenContainer,
                     contentColor = Color.White,
