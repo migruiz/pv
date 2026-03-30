@@ -52,6 +52,14 @@ pv/
 │   │   ├── scheduler.py          # Multi-window scheduler (auto-start, mid-window resume)
 │   │   ├── router_windows.py     # CRUD endpoints for /discharge-windows
 │   │   └── router_control.py     # Start/stop/status endpoints + backward compat
+│   ├── charge_ramp/              # Solar charge ramp (anti-clipping) package
+│   │   ├── models.py             # Pydantic models (config, status, responses)
+│   │   ├── config_store.py       # Single-config JSON persistence + active ramp state
+│   │   ├── ramp_calculator.py    # Cosine bell curve math (pure functions)
+│   │   ├── command_builder.py    # FusionSolar signal payloads (start/update/restore)
+│   │   ├── ramp_loop.py          # Background loop that adjusts max charge power
+│   │   ├── manager.py            # Start/stop/status/restart recovery
+│   │   └── router.py             # Config + control endpoints for /charge-ramp
 │   ├── routers/                  # Other API routers
 │   │   ├── dashboard.py          # Dashboard endpoint
 │   │   └── health.py             # Health check
@@ -63,7 +71,11 @@ pv/
 │   │   ├── test_config_store.py        # CRUD, overlap detection
 │   │   ├── test_correction_loop.py     # Full loop lifecycle
 │   │   ├── test_scheduler.py           # Window scheduling, resume, start/stop
-│   │   └── test_api_endpoints.py       # HTTP-level CRUD and control
+│   │   ├── test_api_endpoints.py       # HTTP-level CRUD and control
+│   │   ├── test_ramp_calculator.py     # Cosine bell curve math
+│   │   ├── test_ramp_command_builder.py # Charge ramp signal payloads
+│   │   ├── test_ramp_loop.py           # Ramp loop lifecycle
+│   │   └── test_ramp_api.py            # Charge ramp HTTP endpoints
 │   ├── Dockerfile                # Multi-arch image (amd64 + arm64)
 │   ├── docker-compose.yml        # Local dev deployment
 │   ├── pyproject.toml            # uv project dependencies
@@ -80,14 +92,15 @@ pv/
     ├── app/src/main/java/ovh/tenjo/pv/
     │   ├── MainActivity.kt       # Navigation, API config
     │   ├── SolarViewModel.kt     # Dashboard + discharge window state
-    │   ├── api/SolarApi.kt       # Retrofit client, data models
+    │   ├── api/SolarApi.kt       # Retrofit client, data models (discharge + charge ramp)
     │   ├── AutoDischargeService.kt     # Foreground notification service
     │   ├── PvFirebaseMessagingService.kt # FCM message handler
     │   ├── NotificationDismissReceiver.kt # Re-post notification on swipe
     │   ├── StopDischargeBroadcastReceiver.kt # Stop from notification action
     │   └── ui/
-    │       ├── DashboardScreen.kt              # Energy flow diagram + window list
+    │       ├── DashboardScreen.kt              # Energy flow diagram + window list + inverter info
     │       ├── DischargeWindowDetailScreen.kt  # Window detail/edit/control
+    │       ├── ChargeRampScreen.kt             # Charge ramp config + control + bell curve
     │       ├── CreateWindowDialog.kt           # New window creation dialog
     │       ├── TimePickers.kt                  # Shared time/duration picker dialogs
     │       ├── TimeUtils.kt                    # Shared time parsing/formatting
@@ -105,7 +118,7 @@ All endpoints except `/health` and `/docs` require `X-API-Key` header.
 |--------|------|-------------|
 | GET | `/health` | Health check (no auth) |
 | GET | `/docs` | Swagger UI |
-| GET | `/dashboard` | Combined: PV, battery, grid, home power + flow directions |
+| GET | `/dashboard` | Combined: PV, battery, grid, home power + flow directions + inverter settings |
 | GET | `/status` | PV power, today's energy, total yield |
 | GET | `/plants` | List stations |
 | GET | `/plants/{id}` | Real-time plant KPIs |
@@ -139,6 +152,16 @@ All endpoints except `/health` and `/docs` require `X-API-Key` header.
 | POST | `/discharge-windows/{id}/start` | Manually start a window now |
 | POST | `/discharge-windows/{id}/stop` | Stop a running window |
 
+### Charge Ramp
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/charge-ramp/config` | Get saved ramp config |
+| PUT | `/charge-ramp/config` | Update config (partial) |
+| GET | `/charge-ramp/status` | Runtime status (active, power, progress) |
+| POST | `/charge-ramp/start` | Start ramp with current config |
+| POST | `/charge-ramp/stop` | Stop ramp, restore TOU mode |
+
 ### Backward-Compatible (legacy auto-discharge)
 
 | Method | Path | Description |
@@ -168,6 +191,87 @@ Configurable battery discharge windows stored in `/data/discharge_windows.json` 
 The scheduler auto-starts windows at their configured time and uses a self-correcting loop (every 5 min) to adjust discharge power. Windows cannot overlap (enforced on create/update). On API restart, active windows are automatically resumed (mid-window resume).
 
 A default "Night Export" window (22:00-02:00, target 0%) is seeded on first startup.
+
+## Charge Ramp (Anti-Clipping)
+
+### Problem
+
+The 7.65 kWp panels can produce more than the 5 kW inverter limit on sunny days, causing clipping (excess PV energy is lost). The charge ramp feature absorbs this excess into the battery by gradually increasing the max charge power to follow the solar production curve.
+
+### How It Works
+
+The user manually triggers a charge ramp from the app. The system:
+
+1. **Switches to self-consumption mode** — Operation Mode changes from TOU (5) to Max Self-Consumption (2)
+2. **Disables Charge from AC** — ensures the battery only charges from PV, not grid
+3. **Sets initial max charge power** — e.g. 200W at the start
+4. **Ramps power along a cosine bell curve** — every 5 min (30s in mock), recalculates the target power based on elapsed time and adjusts the max charge power signal
+5. **Restores TOU mode on completion/stop** — sends 4 signals: Operation Mode=TOU, Charge from AC=Enabled, Max Charge Power=2500W, TOU Time Windows (re-sent because FusionSolar forgets them on mode switch)
+
+### Cosine Bell Curve
+
+The power follows a smooth S-curve on each half of the duration:
+
+```
+First half (progress 0.0 → 0.5):   initial_power → top_power   (cosine ease)
+Second half (progress 0.5 → 1.0):  top_power → final_power     (cosine ease)
+
+Formula per half:  smooth_t = (1 - cos(π × t)) / 2
+                   power = start + (end - start) × smooth_t
+```
+
+Example with initial=200W, top=2500W, final=200W over 4 hours:
+- At 0h (start): 200W
+- At 1h (quarter): ~1350W (smooth ramp up)
+- At 2h (midpoint): 2500W (peak)
+- At 3h (three-quarter): ~1350W (smooth ramp down)
+- At 4h (end): 200W → restores TOU mode
+
+### Configuration
+
+Single config persisted to `/data/charge_ramp_config.json` (Docker) or `./charge_ramp_config.json` (local dev):
+
+- **duration_minutes**: 10-1440 (default: 240 = 4 hours)
+- **initial_power**: 200-2500W (default: 200)
+- **top_power**: 200-2500W (default: 2500)
+- **final_power**: 200-2500W (default: 200)
+
+### FusionSolar Signals Used
+
+| Signal | Start value | During ramp | Restore value |
+|--------|-------------|-------------|---------------|
+| 230320241 (Operation Mode) | "2" (Self-consumption) | — | "5" (TOU) |
+| 230320279 (Charge from AC) | "0" (Disabled) | — | "1" (Enabled) |
+| 10011 (Max Charge Power W) | initial_power | recalculated every interval | "2500" |
+| 230320283 (TOU Windows) | — | — | Re-sent on restore (charge 02:05-04:55, discharge rest) |
+
+### Restart Recovery
+
+- On start: writes `charge_ramp_active.json` with `{start_time, config}`
+- On stop/complete: deletes the file
+- On API startup: `check_resume()` reads the file — if ramp would have completed during downtime, sends restore command immediately; if mid-ramp, resumes
+
+### Conflict Guard
+
+Cannot run simultaneously with discharge windows. `manager.start()` checks `app.state.discharge_tasks` — if any discharge window is active, returns 409.
+
+### Code Structure (`api/charge_ramp/`)
+
+| File | Responsibility |
+|------|---------------|
+| `models.py` | Pydantic models: config, update, status, responses |
+| `config_store.py` | JSON persistence + active ramp state for restart recovery |
+| `ramp_calculator.py` | Pure cosine bell curve math |
+| `command_builder.py` | FusionSolar signal payloads (start, power update, restore) |
+| `ramp_loop.py` | Async background task: periodic power adjustment |
+| `manager.py` | Lifecycle: start/stop/status/check_resume |
+| `router.py` | 5 FastAPI endpoints |
+
+### Android App
+
+- **Dashboard**: "Solar Charge Ramp" card shows status (idle/active with progress bar)
+- **ChargeRampScreen**: config sliders (200-2500W, 100W steps), duration picker, bell curve preview canvas, save/start/stop with confirmation dialogs
+- **Inverter icon**: center of energy flow diamond, tappable — shows operation mode, AC charge, max charge power (read-only, refreshed every 20s from `/dashboard` response)
 
 ## FusionSolar Signal IDs
 
@@ -288,6 +392,7 @@ adb shell am start -n ovh.tenjo.pv/.MainActivity
 - **Public URL**: `https://pv.tenjo.ovh` (Cloudflare tunnel)
 - **Session management**: Cookies persisted to `/data/cookies.json` volume — survives container restarts without re-login
 - **Discharge windows config**: Persisted to `/data/discharge_windows.json` volume
+- **Charge ramp config**: Persisted to `/data/charge_ramp_config.json` volume
 
 ## Environment Variables
 
@@ -310,4 +415,6 @@ adb shell am start -n ovh.tenjo.pv/.MainActivity
 - **Self-correcting discharge loop** runs every 5 min in production (30s in mock mode), reads current SOC, and recalculates the exact power needed to hit the target SOC by the window's end time. Constants: `BATTERY_REAL_CAPACITY_KWH` (4.8), `MAX_DISCHARGE_POWER_KW` (2.5)
 - **Mid-window resume**: on API restart, the scheduler detects windows that should be active and resumes them for the remaining time
 - **Mock clock**: in mock mode, all time-dependent scheduling uses `mock_clock.get_now()` instead of `datetime.now()`, allowing time manipulation via API for testing
-- **Component-based architecture**: code is organized into small, single-responsibility files. The `discharge/` package separates models, config I/O, power math, signal commands, correction loop, scheduler, and routers into individual modules
+- **Component-based architecture**: code is organized into small, single-responsibility files. The `discharge/` and `charge_ramp/` packages separate models, config I/O, power math, signal commands, background loops, managers, and routers into individual modules
+- **Charge ramp config snapshot**: the ramp loop captures config at start time and does not re-read. Config changes during an active ramp take effect on the next start
+- **TOU windows re-sent on restore**: FusionSolar forgets TOU time windows when switching away from TOU mode. The restore command includes the full TOU window config (signal 230320283)
