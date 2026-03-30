@@ -14,6 +14,7 @@ Home solar PV monitoring and control system for a Huawei FusionSolar installatio
 
 - **API** (`api/`): FastAPI middleware that maintains a persistent FusionSolar session and exposes REST endpoints
 - **App** (`app/`): Android Kotlin/Jetpack Compose mobile app with live energy flow dashboard and battery controls
+- **Mock** (`mock/`): Node.js/TypeScript solar system simulator with React UI for development and testing
 - **Deployment**: Docker container on Raspberry Pi 4 (arm64), exposed via Cloudflare tunnel at `https://pv.tenjo.ovh`
 
 ## Plant Details
@@ -34,32 +35,62 @@ Home solar PV monitoring and control system for a Huawei FusionSolar installatio
 ```
 pv/
 ├── api/                          # Python FastAPI backend
-│   ├── main.py                   # FastAPI app, all route handlers, lifespan
+│   ├── main.py                   # FastAPI app, lifespan, mock clock endpoints
 │   ├── session.py                # FusionSolar session manager (cookie persistence, keep-alive)
+│   ├── mock_session.py           # Drop-in session replacement for mock mode
+│   ├── mock_clock.py             # Virtual clock for testing (set/advance/reset time)
 │   ├── auth.py                   # API key authentication (X-API-Key header)
-│   ├── pyproject.toml            # uv project dependencies
-│   ├── uv.lock                   # Locked dependencies
+│   ├── config.py                 # Shared constants (BATTERY_DN, MOCK_MODE, etc.)
+│   ├── notifications.py          # Firebase Cloud Messaging push notifications
+│   ├── dependencies.py           # FastAPI dependency injection
+│   ├── discharge/                # Discharge windows package
+│   │   ├── models.py             # Pydantic models (window config, status, API responses)
+│   │   ├── config_store.py       # JSON file I/O (load/save/CRUD, overlap detection)
+│   │   ├── power_calculator.py   # Discharge power math (pure functions)
+│   │   ├── command_builder.py    # FusionSolar signal payload construction
+│   │   ├── correction_loop.py    # Background loop that adjusts power every 5 min
+│   │   ├── scheduler.py          # Multi-window scheduler (auto-start, mid-window resume)
+│   │   ├── router_windows.py     # CRUD endpoints for /discharge-windows
+│   │   └── router_control.py     # Start/stop/status endpoints + backward compat
+│   ├── routers/                  # Other API routers
+│   │   ├── dashboard.py          # Dashboard endpoint
+│   │   └── health.py             # Health check
 │   ├── Dockerfile                # Multi-arch image (amd64 + arm64)
 │   ├── docker-compose.yml        # Local dev deployment
-│   ├── build-and-push.bat        # Build multi-arch + push to Docker Hub
-│   ├── build-and-run.bat         # Build + run locally
-│   └── test_connection.py        # Original connectivity test script
+│   ├── pyproject.toml            # uv project dependencies
+│   └── uv.lock                   # Locked dependencies
+│
+├── mock/                         # Solar system simulator
+│   ├── server/
+│   │   ├── index.ts              # Express server (port 3002)
+│   │   ├── routes.ts             # Mock API + simulator UI endpoints
+│   │   └── state.ts              # In-memory simulator (SOC, energy balance, command log)
+│   └── src/                      # React UI (Vite, port 5173)
 │
 └── app/                          # Android mobile app (Kotlin/Compose)
     ├── app/src/main/java/ovh/tenjo/pv/
-    │   ├── MainActivity.kt       # Navigation, bottom bar, API config
-    │   ├── SolarViewModel.kt     # Dashboard + battery control state
+    │   ├── MainActivity.kt       # Navigation, API config
+    │   ├── SolarViewModel.kt     # Dashboard + discharge window state
     │   ├── api/SolarApi.kt       # Retrofit client, data models
+    │   ├── AutoDischargeService.kt     # Foreground notification service
+    │   ├── PvFirebaseMessagingService.kt # FCM message handler
+    │   ├── NotificationDismissReceiver.kt # Re-post notification on swipe
+    │   ├── StopDischargeBroadcastReceiver.kt # Stop from notification action
     │   └── ui/
-    │       ├── DashboardScreen.kt      # Energy flow diagram, stats, battery card
-    │       ├── BatteryControlScreen.kt # Forced charge/discharge controls
-    │       └── theme/                  # Dark solar theme (Color, Theme, Type)
+    │       ├── DashboardScreen.kt              # Energy flow diagram + window list
+    │       ├── DischargeWindowDetailScreen.kt  # Window detail/edit/control
+    │       ├── CreateWindowDialog.kt           # New window creation dialog
+    │       ├── TimePickers.kt                  # Shared time/duration picker dialogs
+    │       ├── TimeUtils.kt                    # Shared time parsing/formatting
+    │       └── theme/                          # Dark solar theme (Color, Theme, Type)
     └── gradle/libs.versions.toml # Version catalog
 ```
 
 ## API Endpoints
 
 All endpoints except `/health` and `/docs` require `X-API-Key` header.
+
+### Dashboard & Devices
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -76,12 +107,58 @@ All endpoints except `/health` and `/docs` require `X-API-Key` header.
 | GET | `/batteries/{id}/config` | All configurable battery parameters |
 | GET | `/devices` | List all devices |
 | GET | `/devices/{dn}/realtime` | Real-time device signals |
+
+### Battery Control
+
+| Method | Path | Description |
+|--------|------|-------------|
 | POST | `/batteries/{id}/forced-charge` | Force charge/discharge/stop |
 | POST | `/batteries/{id}/operation-mode` | Change TOU/self-consumption mode |
 | POST | `/batteries/{id}/params` | Update SOC limits, charge power limits |
-| POST | `/batteries/{id}/auto-discharge` | Start auto-discharge to reach 0% by 2 AM |
-| POST | `/batteries/{id}/auto-discharge/stop` | Cancel auto-discharge |
-| GET | `/batteries/{id}/auto-discharge/status` | Auto-discharge process state |
+
+### Discharge Windows
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/discharge-windows` | List all configured windows |
+| GET | `/discharge-windows/{id}` | Get single window |
+| POST | `/discharge-windows` | Create window (validates overlap) |
+| PUT | `/discharge-windows/{id}` | Update window (partial, validates overlap) |
+| DELETE | `/discharge-windows/{id}` | Delete window (stops if running) |
+| GET | `/discharge-windows/status` | Runtime status for all windows |
+| GET | `/discharge-windows/{id}/status` | Status for single window |
+| POST | `/discharge-windows/{id}/start` | Manually start a window now |
+| POST | `/discharge-windows/{id}/stop` | Stop a running window |
+
+### Backward-Compatible (legacy auto-discharge)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/batteries/{id}/auto-discharge/status` | First active window status |
+| POST | `/batteries/{id}/auto-discharge/stop` | Stop all running windows |
+
+### Mock-Only Endpoints (when MOCK_MODE=true)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/mock/time` | Get current virtual time |
+| POST | `/mock/time` | Set virtual time `{"hour": 22, "minute": 0}` |
+| POST | `/mock/time/advance` | Advance clock `{"minutes": 30}` |
+| POST | `/mock/time/reset` | Return to real system time |
+
+## Discharge Windows
+
+Configurable battery discharge windows stored in `/data/discharge_windows.json` (Docker volume) or `./discharge_windows.json` (local dev). Each window defines:
+
+- **start_time**: "HH:MM" format
+- **duration_minutes**: 1-1440
+- **target_soc**: 0-100% (SOC to reach by end of window)
+- **notify**: send FCM push notifications
+- **enabled**: toggle without deleting
+
+The scheduler auto-starts windows at their configured time and uses a self-correcting loop (every 5 min) to adjust discharge power. Windows cannot overlap (enforced on create/update). On API restart, active windows are automatically resumed (mid-window resume).
+
+A default "Night Export" window (22:00-02:00, target 0%) is seeded on first startup.
 
 ## FusionSolar Signal IDs
 
@@ -105,32 +182,74 @@ These were reverse-engineered from the FusionSolar web portal's `set-config-sign
 
 ## Development
 
-### API (local)
+### Mock System + API (full local dev)
+
+Start the mock simulator and API together for local development:
+
+```bash
+# Terminal 1: Start mock solar simulator (Express API on :3002, React UI on :5173)
+cd mock
+npm run dev
+
+# Terminal 2: Start API in mock mode, connected to mock simulator
+cd api
+MOCK_MODE=1 uv run uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+- Mock simulator UI: `http://localhost:5173` (change PV, battery SOC, home consumption)
+- Mock API: `http://localhost:3002/api/state`
+- API Swagger docs: `http://localhost:8000/docs`
+
+### Virtual Clock (mock mode only)
+
+Control simulated time to test discharge window scheduling:
+
+```bash
+# Set time to 9:59 PM
+curl -X POST -H "Content-Type: application/json" -d '{"hour":21,"minute":59}' http://localhost:8000/mock/time
+
+# Advance 2 minutes (triggers 10 PM window)
+curl -X POST -H "Content-Type: application/json" -d '{"minutes":2}' http://localhost:8000/mock/time/advance
+
+# Reset to real time
+curl -X POST http://localhost:8000/mock/time/reset
+```
+
+### API (local, production mode)
+
 ```bash
 cd api
 uv run fastapi dev main.py
 ```
 
 ### API (Docker local)
+
 ```bash
 cd api
 docker compose up --build
 ```
 
 ### API (push to Docker Hub)
+
 ```bash
 cd api
 build-and-push.bat   # builds linux/amd64 + linux/arm64, pushes to migruiz/pv-solar-api:latest
 ```
 
 ### Android App
+
 - Open `app/` in Android Studio
-- API URL configured in `MainActivity.kt` → `SolarApiClient.baseUrl`
-- Production: `https://pv.tenjo.ovh/`
-- Local dev: `http://10.0.2.2:8000/` (emulator) or `http://localhost:8000/` (adb reverse)
+- API URL configured in `app/local.properties`:
+  - Production: `pv.api.url=https://pv.tenjo.ovh/`
+  - Local dev: `pv.api.url=http://localhost:8000/` (with `adb reverse tcp:8000 tcp:8000`)
 
 ### Install APK via ADB
+
 ```bash
+# Set up port forwarding (phone localhost:8000 → PC localhost:8000)
+adb reverse tcp:8000 tcp:8000
+
+# Build and install
 cd app && ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n ovh.tenjo.pv/.MainActivity
@@ -142,6 +261,7 @@ adb shell am start -n ovh.tenjo.pv/.MainActivity
 - **Production host**: Raspberry Pi 4 running Docker via Portainer
 - **Public URL**: `https://pv.tenjo.ovh` (Cloudflare tunnel)
 - **Session management**: Cookies persisted to `/data/cookies.json` volume — survives container restarts without re-login
+- **Discharge windows config**: Persisted to `/data/discharge_windows.json` volume
 
 ## Environment Variables
 
@@ -151,6 +271,8 @@ adb shell am start -n ovh.tenjo.pv/.MainActivity
 | FUSIONSOLAR_PASS | Yes | FusionSolar portal password |
 | HUAWEI_SUBDOMAIN | No | Default: `uni003eu5` |
 | API_KEY | Yes | API authentication key for X-API-Key header |
+| MOCK_MODE | No | Set to `1`/`true`/`yes` to use mock simulator instead of FusionSolar |
+| MOCK_URL | No | Mock simulator URL (default: `http://localhost:3002`) |
 
 ## Key Design Decisions
 
@@ -158,4 +280,8 @@ adb shell am start -n ovh.tenjo.pv/.MainActivity
 - **Keep-alive loop** runs every 120 seconds mimicking the web browser to maintain the session
 - **Cookie persistence** via symlink (`/app/cookies.json` → `/data/cookies.json`) so the Docker volume stores session state without modifying application code
 - **Grid direction**: FusionSolar's "buy.power" label means the grid buys from you (exporting), not that you're buying from the grid
-- **Auto-discharge** uses a self-correcting background loop (every 5 min) to force-discharge the battery to 0% by exactly 2:00 AM Dublin time, maximizing export revenue. Configurable constants: `BATTERY_REAL_CAPACITY_KWH` (usable capacity, default 4.8), `MAX_DISCHARGE_POWER_KW` (2.5), `MIN_SOC_TO_START` (5%), correction interval (300s). State stored in `app.state`, not persistent across restarts
+- **Discharge windows** use a JSON config file on the Docker volume, not a database. The scheduler reads from file, and CRUD endpoints write atomically (write tmp + rename). Overlap between windows is prevented on create/update
+- **Self-correcting discharge loop** runs every 5 min in production (30s in mock mode), reads current SOC, and recalculates the exact power needed to hit the target SOC by the window's end time. Constants: `BATTERY_REAL_CAPACITY_KWH` (4.8), `MAX_DISCHARGE_POWER_KW` (2.5)
+- **Mid-window resume**: on API restart, the scheduler detects windows that should be active and resumes them for the remaining time
+- **Mock clock**: in mock mode, all time-dependent scheduling uses `mock_clock.get_now()` instead of `datetime.now()`, allowing time manipulation via API for testing
+- **Component-based architecture**: code is organized into small, single-responsibility files. The `discharge/` package separates models, config I/O, power math, signal commands, correction loop, scheduler, and routers into individual modules
