@@ -71,7 +71,7 @@ fun CreateWindowDialog(
                         value = targetSoc,
                         onValueChange = { targetSoc = it },
                         valueRange = 0f..100f,
-                        steps = 19,
+                        steps = 99,
                         colors = SliderDefaults.colors(thumbColor = EnergyOrange, activeTrackColor = EnergyOrange),
                     )
                 }

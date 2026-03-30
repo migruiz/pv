@@ -2,7 +2,6 @@ package ovh.tenjo.pv
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -58,11 +57,11 @@ class SolarViewModel : ViewModel() {
     private val _windowDetail = MutableStateFlow(WindowDetailState())
     val windowDetail: StateFlow<WindowDetailState> = _windowDetail.asStateFlow()
 
-    private var statusPollingJob: Job? = null
 
     init {
         refreshDashboard()
         loadWindows()
+        startAutoRefresh()
     }
 
     // -- Dashboard --
@@ -121,7 +120,6 @@ class SolarViewModel : ViewModel() {
                     windows = windowList,
                     statuses = statusMap,
                 )
-                if (statuses.any { it.active }) startStatusPolling() else stopStatusPolling()
             } catch (e: Exception) {
                 _windows.value = _windows.value.copy(
                     isLoading = false,
@@ -137,7 +135,6 @@ class SolarViewModel : ViewModel() {
                 val statuses = api.getWindowStatuses()
                 val statusMap = statuses.associateBy { it.windowId }
                 _windows.value = _windows.value.copy(statuses = statusMap)
-                if (statuses.any { it.active }) startStatusPolling() else stopStatusPolling()
             } catch (_: Exception) { }
         }
     }
@@ -230,21 +227,15 @@ class SolarViewModel : ViewModel() {
         _windowDetail.value = _windowDetail.value.copy(message = null)
     }
 
-    // -- Status polling --
+    // -- Auto-refresh --
 
-    private fun startStatusPolling() {
-        if (statusPollingJob?.isActive == true) return
-        statusPollingJob = viewModelScope.launch {
+    private fun startAutoRefresh() {
+        viewModelScope.launch {
             while (isActive) {
-                delay(10_000)
-                loadStatuses()
+                delay(20_000)
                 loadDashboard(showLoading = false)
+                loadStatuses()
             }
         }
-    }
-
-    private fun stopStatusPolling() {
-        statusPollingJob?.cancel()
-        statusPollingJob = null
     }
 }
