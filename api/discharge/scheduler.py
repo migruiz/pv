@@ -15,12 +15,8 @@ from mock_clock import get_now
 from . import config_store
 from .command_builder import build_discharge_command
 from .correction_loop import CorrectionLoop
-from .models import DischargeWindow, StartResponse, StopResponse, WindowStatus
-from .power_calculator import (
-    BATTERY_REAL_CAPACITY_KWH,
-    calc_discharge_power,
-    remaining_energy_kwh,
-)
+from .models import DischargeWindow, StartResponse, StopResponse, WindowStatus, build_status_dict
+from .power_calculator import calc_discharge_power, remaining_energy_kwh
 
 logger = logging.getLogger("pv.discharge.scheduler")
 
@@ -138,19 +134,23 @@ class WindowScheduler:
     # Launch / start / stop
     # ------------------------------------------------------------------
 
-    async def _launch_window(self, window: DischargeWindow, end_time: datetime) -> None:
-        """Start the correction loop for a window."""
+    async def _launch_window(
+        self, window: DischargeWindow, end_time: datetime,
+    ) -> tuple[float, float, float] | None:
+        """Start the correction loop for a window.
+
+        Returns (soc, power_kw, minutes_left) on success, None if skipped.
+        """
         if window.id in self._app_state.discharge_tasks:
             logger.info("Window '%s' already running, skipping", window.name)
-            return
+            return None
 
-        # Read SOC and send initial discharge command
         try:
             b = await self._session.call("get_battery_basic_stats", self._battery_id)
             soc = b.state_of_charge
         except Exception as exc:
             logger.error("Failed to read SOC for window '%s': %s", window.name, exc)
-            return
+            return None
 
         minutes_left = (end_time - get_now()).total_seconds() / 60
         power_kw = calc_discharge_power(soc, minutes_left, window.target_soc)
@@ -160,7 +160,7 @@ class WindowScheduler:
                 "Window '%s' not worthwhile: SOC=%.1f%%, target=%.0f%%",
                 window.name, soc, window.target_soc,
             )
-            return
+            return None
 
         duration_min = int(min(minutes_left, 1440))
         try:
@@ -169,23 +169,19 @@ class WindowScheduler:
             )
         except Exception as exc:
             logger.error("Failed to start discharge for window '%s': %s", window.name, exc)
-            return
+            return None
 
-        # Store initial status
-        self._app_state.discharge_statuses[window.id] = {
-            "window_id": window.id,
-            "window_name": window.name,
-            "active": True,
-            "current_soc": soc,
-            "discharge_power_kw": round(power_kw, 3),
-            "remaining_energy_kwh": round(remaining_energy_kwh(soc, window.target_soc), 3),
-            "target_time": end_time.isoformat(),
-            "minutes_remaining": round(minutes_left, 1),
-            "hours_remaining": round(minutes_left / 60, 2),
-            "last_adjustment": get_now().isoformat(),
-        }
+        self._app_state.discharge_statuses[window.id] = build_status_dict(
+            window_id=window.id,
+            window_name=window.name,
+            soc=soc,
+            power_kw=power_kw,
+            minutes_left=minutes_left,
+            energy_kwh=remaining_energy_kwh(soc, window.target_soc),
+            end_time_iso=end_time.isoformat(),
+            now_iso=get_now().isoformat(),
+        )
 
-        # Start correction loop
         loop = CorrectionLoop(self._app_state, self._session, self._battery_id, window, end_time)
         task = asyncio.create_task(loop.run())
         self._app_state.discharge_tasks[window.id] = task
@@ -199,6 +195,7 @@ class WindowScheduler:
             "Window '%s' started: SOC=%.1f%%, power=%.3f kW, end=%s",
             window.name, soc, power_kw, end_time.isoformat(),
         )
+        return soc, power_kw, minutes_left
 
     async def start_window(self, window_id: str) -> StartResponse:
         """Manually start a specific window now."""
@@ -211,24 +208,15 @@ class WindowScheduler:
             if not task.done():
                 raise ValueError(f"Window '{window.name}' is already running")
 
-        # Compute end time from now
-        now = get_now()
-        end_time = now + timedelta(minutes=window.duration_minutes)
+        end_time = get_now() + timedelta(minutes=window.duration_minutes)
+        result = await self._launch_window(window, end_time)
 
-        # Read SOC
-        b = await self._session.call("get_battery_basic_stats", self._battery_id)
-        soc = b.state_of_charge
-
-        minutes_left = window.duration_minutes
-        power_kw = calc_discharge_power(soc, minutes_left, window.target_soc)
-
-        if power_kw is None:
+        if result is None:
             raise ValueError(
-                f"Not worthwhile: SOC={soc}%, target={window.target_soc}%"
+                f"Not worthwhile: SOC at or below target {window.target_soc}%"
             )
 
-        await self._launch_window(window, end_time)
-
+        soc, power_kw, minutes_left = result
         return StartResponse(
             success=True,
             window_id=window.id,
@@ -266,22 +254,23 @@ class WindowScheduler:
     # Status
     # ------------------------------------------------------------------
 
-    def get_status(self, window_id: str) -> WindowStatus:
+    def get_status(self, window_id: str, window_name: str | None = None) -> WindowStatus:
         """Get the runtime status of a single window."""
         status = self._app_state.discharge_statuses.get(window_id)
         if status and status.get("active"):
             return WindowStatus(**status)
 
-        window = config_store.get_window(window_id)
-        name = window.name if window else "Unknown"
-        return WindowStatus(window_id=window_id, window_name=name, active=False)
+        if window_name is None:
+            window = config_store.get_window(window_id)
+            window_name = window.name if window else "Unknown"
+        return WindowStatus(window_id=window_id, window_name=window_name, active=False)
 
     def get_all_statuses(self) -> list[WindowStatus]:
-        """Get runtime statuses for all configured windows."""
-        statuses = []
-        for w in config_store.load_windows():
-            statuses.append(self.get_status(w.id))
-        return statuses
+        """Get runtime statuses for all configured windows (single file read)."""
+        return [
+            self.get_status(w.id, w.name)
+            for w in config_store.load_windows()
+        ]
 
     # ------------------------------------------------------------------
     # Helpers

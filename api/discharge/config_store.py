@@ -18,7 +18,7 @@ DOCKER_PATH = Path("/data/discharge_windows.json")
 LOCAL_PATH = Path(__file__).parent.parent / "discharge_windows.json"
 
 DEFAULT_WINDOW = DischargeWindow(
-    id=uuid.uuid4().hex[:8],
+    id="default0",
     name="Night Export",
     start_time="22:00",
     duration_minutes=240,
@@ -28,11 +28,18 @@ DEFAULT_WINDOW = DischargeWindow(
 )
 
 
+_cached_path: Path | None = None
+
+
 def _config_path() -> Path:
-    """Return the path to the config file, preferring Docker volume."""
-    if DOCKER_PATH.parent.exists() and os.access(DOCKER_PATH.parent, os.W_OK):
-        return DOCKER_PATH
-    return LOCAL_PATH
+    """Return the path to the config file, preferring Docker volume. Cached after first call."""
+    global _cached_path
+    if _cached_path is None:
+        if DOCKER_PATH.parent.exists() and os.access(DOCKER_PATH.parent, os.W_OK):
+            _cached_path = DOCKER_PATH
+        else:
+            _cached_path = LOCAL_PATH
+    return _cached_path
 
 
 def _parse_time_minutes(time_str: str) -> int:

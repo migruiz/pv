@@ -13,8 +13,8 @@ from config import MOCK_MODE
 from mock_clock import get_now
 
 from .command_builder import build_discharge_command, build_stop_command
-from .models import DischargeWindow
-from .power_calculator import BATTERY_REAL_CAPACITY_KWH, calc_discharge_power
+from .models import DischargeWindow, build_status_dict
+from .power_calculator import calc_discharge_power, remaining_energy_kwh
 
 logger = logging.getLogger("pv.discharge.loop")
 
@@ -129,20 +129,16 @@ class CorrectionLoop:
 
     def _update_status(self, soc: float, power_kw: float, minutes_left: float) -> None:
         """Update the shared status dict for this window."""
-        from .power_calculator import remaining_energy_kwh
-
-        self._app_state.discharge_statuses[self._window.id] = {
-            "window_id": self._window.id,
-            "window_name": self._window.name,
-            "active": True,
-            "current_soc": soc,
-            "discharge_power_kw": round(power_kw, 3),
-            "remaining_energy_kwh": round(remaining_energy_kwh(soc, self._window.target_soc), 3),
-            "target_time": self._end_time.isoformat(),
-            "minutes_remaining": round(minutes_left, 1),
-            "hours_remaining": round(minutes_left / 60, 2),
-            "last_adjustment": get_now().isoformat(),
-        }
+        self._app_state.discharge_statuses[self._window.id] = build_status_dict(
+            window_id=self._window.id,
+            window_name=self._window.name,
+            soc=soc,
+            power_kw=power_kw,
+            minutes_left=minutes_left,
+            energy_kwh=remaining_energy_kwh(soc, self._window.target_soc),
+            end_time_iso=self._end_time.isoformat(),
+            now_iso=get_now().isoformat(),
+        )
 
     def _cleanup(self) -> None:
         """Remove this window's status and task reference."""

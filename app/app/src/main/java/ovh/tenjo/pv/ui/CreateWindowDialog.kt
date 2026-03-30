@@ -12,9 +12,7 @@ import androidx.compose.ui.unit.dp
 import ovh.tenjo.pv.SolarViewModel
 import ovh.tenjo.pv.api.DischargeWindowCreate
 import ovh.tenjo.pv.ui.theme.EnergyOrange
-import ovh.tenjo.pv.ui.theme.OnSurfaceVariant
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CreateWindowDialog(
     viewModel: SolarViewModel,
@@ -33,23 +31,14 @@ fun CreateWindowDialog(
 
     val detailState by viewModel.windowDetail.collectAsState()
 
-    // Close dialog after successful creation
     LaunchedEffect(detailState.message) {
         if (detailState.message == "Window created") {
             onDismiss()
         }
     }
 
-    // Helper functions (same logic as detail screen)
-    fun parseMinutes(time: String): Int {
-        val parts = time.split(":")
-        if (parts.size != 2) return 0
-        return (parts[0].toIntOrNull() ?: 0) * 60 + (parts[1].toIntOrNull() ?: 0)
-    }
-    fun minutesToStr(m: Int): String {
-        val total = ((m % 1440) + 1440) % 1440
-        return "%02d:%02d".format(total / 60, total % 60)
-    }
+    val dh = durationMinutes / 60
+    val dm = durationMinutes % 60
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -65,70 +54,26 @@ fun CreateWindowDialog(
                     placeholder = { Text("e.g. Morning Discharge") },
                 )
 
-                // Start / End / Duration — tappable fields
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = startTime,
-                        onValueChange = {},
-                        label = { Text("Start") },
-                        readOnly = true,
-                        singleLine = true,
-                        modifier = Modifier.weight(1f).clickable { showStartPicker = true },
-                        enabled = false,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            disabledTextColor = MaterialTheme.colorScheme.onSurface,
-                            disabledBorderColor = MaterialTheme.colorScheme.outline,
-                            disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        ),
-                    )
-                    OutlinedTextField(
-                        value = endTime,
-                        onValueChange = {},
-                        label = { Text("End") },
-                        readOnly = true,
-                        singleLine = true,
-                        modifier = Modifier.weight(1f).clickable { showEndPicker = true },
-                        enabled = false,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            disabledTextColor = MaterialTheme.colorScheme.onSurface,
-                            disabledBorderColor = MaterialTheme.colorScheme.outline,
-                            disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        ),
-                    )
+                    ReadOnlyTimeField("Start", startTime, { showStartPicker = true }, Modifier.weight(1f))
+                    ReadOnlyTimeField("End", endTime, { showEndPicker = true }, Modifier.weight(1f))
                 }
 
-                // Duration display — tappable
-                val dh = durationMinutes / 60
-                val dm = durationMinutes % 60
-                OutlinedTextField(
-                    value = "${dh}h ${dm}m ($durationMinutes min)",
-                    onValueChange = {},
-                    label = { Text("Duration") },
-                    readOnly = true,
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().clickable { showDurationPicker = true },
-                    enabled = false,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        disabledTextColor = MaterialTheme.colorScheme.onSurface,
-                        disabledBorderColor = MaterialTheme.colorScheme.outline,
-                        disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    ),
+                ReadOnlyTimeField(
+                    "Duration",
+                    "${dh}h ${dm}m ($durationMinutes min)",
+                    { showDurationPicker = true },
+                    Modifier.fillMaxWidth(),
                 )
 
                 Column {
-                    Text(
-                        "Target SOC: ${targetSoc.toInt()}%",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
+                    Text("Target SOC: ${targetSoc.toInt()}%", style = MaterialTheme.typography.bodyMedium)
                     Slider(
                         value = targetSoc,
                         onValueChange = { targetSoc = it },
                         valueRange = 0f..100f,
                         steps = 19,
-                        colors = SliderDefaults.colors(
-                            thumbColor = EnergyOrange,
-                            activeTrackColor = EnergyOrange,
-                        ),
+                        colors = SliderDefaults.colors(thumbColor = EnergyOrange, activeTrackColor = EnergyOrange),
                     )
                 }
 
@@ -147,11 +92,7 @@ fun CreateWindowDialog(
 
                 detailState.message?.let { msg ->
                     if (msg.startsWith("Error")) {
-                        Text(
-                            msg,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
+                        Text(msg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                     }
                 }
             }
@@ -181,111 +122,66 @@ fun CreateWindowDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         },
     )
 
-    // -- Time Picker Dialogs --
-
     if (showStartPicker) {
-        val startState = rememberTimePickerState(
-            initialHour = parseMinutes(startTime) / 60,
-            initialMinute = parseMinutes(startTime) % 60,
-            is24Hour = true,
-        )
-        AlertDialog(
-            onDismissRequest = { showStartPicker = false },
-            title = { Text("Start Time") },
-            text = {
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    TimePicker(state = startState)
-                }
+        TimePickerDialog(
+            title = "Start Time",
+            initialHour = parseTimeToMinutes(startTime) / 60,
+            initialMinute = parseTimeToMinutes(startTime) % 60,
+            onConfirm = { hour, minute ->
+                startTime = "%02d:%02d".format(hour, minute)
+                endTime = calcEndTime(startTime, durationMinutes)
+                showStartPicker = false
             },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        startTime = "%02d:%02d".format(startState.hour, startState.minute)
-                        endTime = minutesToStr(parseMinutes(startTime) + durationMinutes)
-                        showStartPicker = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = EnergyOrange),
-                ) { Text("OK", fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = { TextButton(onClick = { showStartPicker = false }) { Text("Cancel") } },
+            onDismiss = { showStartPicker = false },
         )
     }
 
     if (showEndPicker) {
-        val endState = rememberTimePickerState(
-            initialHour = parseMinutes(endTime) / 60,
-            initialMinute = parseMinutes(endTime) % 60,
-            is24Hour = true,
-        )
-        AlertDialog(
-            onDismissRequest = { showEndPicker = false },
-            title = { Text("End Time") },
-            text = {
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    TimePicker(state = endState)
-                }
+        TimePickerDialog(
+            title = "End Time",
+            initialHour = parseTimeToMinutes(endTime) / 60,
+            initialMinute = parseTimeToMinutes(endTime) % 60,
+            onConfirm = { hour, minute ->
+                endTime = "%02d:%02d".format(hour, minute)
+                durationMinutes = calcDuration(startTime, endTime)
+                showEndPicker = false
             },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        endTime = "%02d:%02d".format(endState.hour, endState.minute)
-                        val s = parseMinutes(startTime)
-                        val e = parseMinutes(endTime)
-                        durationMinutes = ((e - s) + 1440) % 1440
-                        showEndPicker = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = EnergyOrange),
-                ) { Text("OK", fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = { TextButton(onClick = { showEndPicker = false }) { Text("Cancel") } },
+            onDismiss = { showEndPicker = false },
         )
     }
 
     if (showDurationPicker) {
-        var dh by remember { mutableIntStateOf(durationMinutes / 60) }
-        var dm by remember { mutableIntStateOf(durationMinutes % 60) }
-        AlertDialog(
-            onDismissRequest = { showDurationPicker = false },
-            title = { Text("Duration") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Column {
-                        Text("Hours: $dh", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
-                        Slider(
-                            value = dh.toFloat(), onValueChange = { dh = it.toInt() },
-                            valueRange = 0f..23f, steps = 22,
-                            colors = SliderDefaults.colors(thumbColor = EnergyOrange, activeTrackColor = EnergyOrange),
-                        )
-                    }
-                    Column {
-                        Text("Minutes: $dm", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
-                        Slider(
-                            value = dm.toFloat(), onValueChange = { dm = it.toInt() },
-                            valueRange = 0f..55f, steps = 10,
-                            colors = SliderDefaults.colors(thumbColor = EnergyOrange, activeTrackColor = EnergyOrange),
-                        )
-                    }
-                    Text("Total: ${dh}h ${dm}m (${dh * 60 + dm} min)", style = MaterialTheme.typography.bodySmall, color = OnSurfaceVariant)
-                }
+        DurationPickerDialog(
+            initialHours = durationMinutes / 60,
+            initialMinutes = durationMinutes % 60,
+            onConfirm = { hours, minutes ->
+                durationMinutes = hours * 60 + minutes
+                endTime = calcEndTime(startTime, durationMinutes)
+                showDurationPicker = false
             },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        durationMinutes = dh * 60 + dm
-                        endTime = minutesToStr(parseMinutes(startTime) + durationMinutes)
-                        showDurationPicker = false
-                    },
-                    enabled = dh > 0 || dm > 0,
-                    colors = ButtonDefaults.buttonColors(containerColor = EnergyOrange),
-                ) { Text("OK", fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = { TextButton(onClick = { showDurationPicker = false }) { Text("Cancel") } },
+            onDismiss = { showDurationPicker = false },
         )
     }
+}
+
+@Composable
+private fun ReadOnlyTimeField(label: String, value: String, onClick: () -> Unit, modifier: Modifier) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = {},
+        label = { Text(label) },
+        readOnly = true,
+        singleLine = true,
+        modifier = modifier.clickable { onClick() },
+        enabled = false,
+        colors = OutlinedTextFieldDefaults.colors(
+            disabledTextColor = MaterialTheme.colorScheme.onSurface,
+            disabledBorderColor = MaterialTheme.colorScheme.outline,
+            disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        ),
+    )
 }

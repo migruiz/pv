@@ -8,3 +8,4 @@ __pycache__/
 # Firebase credentials
 api/firebase-sa.json
 app/app/google-services.json
+api/discharge_windows.json

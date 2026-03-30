@@ -596,7 +596,7 @@ private fun DischargeWindowCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 // Time range
-                val endTime = computeEndTime(window.startTime, window.durationMinutes)
+                val endTime = calcEndTime(window.startTime, window.durationMinutes)
                 Text(
                     "${window.startTime} \u2192 $endTime",
                     style = MaterialTheme.typography.bodySmall,
@@ -636,13 +636,6 @@ private fun DischargeWindowCard(
     }
 }
 
-private fun computeEndTime(startTime: String, durationMinutes: Int): String {
-    val parts = startTime.split(":")
-    val totalMinutes = parts[0].toInt() * 60 + parts[1].toInt() + durationMinutes
-    val endHour = (totalMinutes / 60) % 24
-    val endMinute = totalMinutes % 60
-    return "%02d:%02d".format(endHour, endMinute)
-}
 
 // ------------------------------------------------------------------
 // Error card

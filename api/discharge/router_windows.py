@@ -80,17 +80,15 @@ async def update_window(window_id: str, body: DischargeWindowUpdate, request: Re
 @router.delete("/{window_id}", status_code=204)
 async def delete_window(window_id: str, request: Request):
     """Delete a discharge window."""
+    # Stop if running (delegate to scheduler)
+    scheduler = request.app.state.scheduler
+    try:
+        await scheduler.stop_window(window_id)
+    except ValueError:
+        pass
+
     if not config_store.delete_window(window_id):
         raise HTTPException(status_code=404, detail=f"Window {window_id} not found")
-
-    # Stop if running
-    task = request.app.state.discharge_tasks.get(window_id)
-    if task and not task.done():
-        task.cancel()
-        try:
-            await task
-        except Exception:
-            pass
 
     request.app.state.windows_changed.set()
 

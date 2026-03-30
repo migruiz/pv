@@ -71,3 +71,28 @@ class StopResponse(BaseModel):
 
     success: bool
     detail: str
+
+
+def build_status_dict(
+    window_id: str,
+    window_name: str,
+    soc: float,
+    power_kw: float,
+    minutes_left: float,
+    energy_kwh: float,
+    end_time_iso: str,
+    now_iso: str,
+) -> dict:
+    """Build a status snapshot dict (shared by correction loop and scheduler)."""
+    return {
+        "window_id": window_id,
+        "window_name": window_name,
+        "active": True,
+        "current_soc": soc,
+        "discharge_power_kw": round(power_kw, 3),
+        "remaining_energy_kwh": round(energy_kwh, 3),
+        "target_time": end_time_iso,
+        "minutes_remaining": round(minutes_left, 1),
+        "hours_remaining": round(minutes_left / 60, 2),
+        "last_adjustment": now_iso,
+    }
