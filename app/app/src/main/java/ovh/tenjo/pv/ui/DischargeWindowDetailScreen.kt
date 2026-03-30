@@ -1,10 +1,10 @@
 package ovh.tenjo.pv.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -15,7 +15,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import ovh.tenjo.pv.SolarViewModel
 import ovh.tenjo.pv.WindowDetailState
@@ -24,6 +23,51 @@ import ovh.tenjo.pv.api.DischargeWindowUpdate
 import ovh.tenjo.pv.ui.theme.EnergyOrange
 import ovh.tenjo.pv.ui.theme.OnSurfaceVariant
 import ovh.tenjo.pv.ui.theme.SurfaceContainer
+import java.util.Calendar
+
+// -- Time helpers --
+
+private fun parseTimeToMinutes(time: String): Int {
+    val parts = time.split(":")
+    if (parts.size != 2) return 0
+    return (parts[0].toIntOrNull() ?: 0) * 60 + (parts[1].toIntOrNull() ?: 0)
+}
+
+private fun minutesToTimeString(totalMinutes: Int): String {
+    val m = ((totalMinutes % 1440) + 1440) % 1440
+    return "%02d:%02d".format(m / 60, m % 60)
+}
+
+private fun calcDuration(startTime: String, endTime: String): Int {
+    val start = parseTimeToMinutes(startTime)
+    val end = parseTimeToMinutes(endTime)
+    return ((end - start) + 1440) % 1440
+}
+
+private fun calcEndTime(startTime: String, durationMinutes: Int): String {
+    val start = parseTimeToMinutes(startTime)
+    return minutesToTimeString(start + durationMinutes)
+}
+
+
+/**
+ * Take today's date at start_time, add duration → that's the end datetime.
+ * Button enabled if now < end datetime.
+ */
+private fun canStartWindow(startTime: String, durationMinutes: Int): Boolean {
+    val now = Calendar.getInstance()
+    val startMinutes = parseTimeToMinutes(startTime)
+
+    val endCal = (now.clone() as Calendar).apply {
+        set(Calendar.HOUR_OF_DAY, startMinutes / 60)
+        set(Calendar.MINUTE, startMinutes % 60)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+        add(Calendar.MINUTE, durationMinutes)
+    }
+
+    return now.before(endCal)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,17 +109,23 @@ fun DischargeWindowDetailScreen(
     // Editable fields
     var name by remember(window) { mutableStateOf(window.name) }
     var startTime by remember(window) { mutableStateOf(window.startTime) }
-    var durationMinutes by remember(window) { mutableStateOf(window.durationMinutes.toString()) }
+    var durationMinutes by remember(window) { mutableIntStateOf(window.durationMinutes) }
+    var endTime by remember(window) { mutableStateOf(calcEndTime(window.startTime, window.durationMinutes)) }
     var targetSoc by remember(window) { mutableFloatStateOf(window.targetSoc.toFloat()) }
     var notify by remember(window) { mutableStateOf(window.notify) }
     var enabled by remember(window) { mutableStateOf(window.enabled) }
 
     val hasChanges = name != window.name ||
         startTime != window.startTime ||
-        durationMinutes != window.durationMinutes.toString() ||
+        durationMinutes != window.durationMinutes ||
         targetSoc != window.targetSoc.toFloat() ||
         notify != window.notify ||
         enabled != window.enabled
+
+    // Time picker states
+    var showStartPicker by remember { mutableStateOf(false) }
+    var showEndPicker by remember { mutableStateOf(false) }
+    var showDurationPicker by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -111,9 +161,11 @@ fun DischargeWindowDetailScreen(
                 name = name,
                 onNameChange = { name = it },
                 startTime = startTime,
-                onStartTimeChange = { startTime = it },
+                endTime = endTime,
                 durationMinutes = durationMinutes,
-                onDurationChange = { durationMinutes = it },
+                onStartTimeClick = { showStartPicker = true },
+                onEndTimeClick = { showEndPicker = true },
+                onDurationClick = { showDurationPicker = true },
                 targetSoc = targetSoc,
                 onTargetSocChange = { targetSoc = it },
                 notify = notify,
@@ -126,13 +178,12 @@ fun DischargeWindowDetailScreen(
             if (hasChanges) {
                 Button(
                     onClick = {
-                        val dur = durationMinutes.toIntOrNull() ?: window.durationMinutes
                         viewModel.updateWindow(
                             windowId,
                             DischargeWindowUpdate(
                                 name = name,
                                 startTime = startTime,
-                                durationMinutes = dur,
+                                durationMinutes = durationMinutes,
                                 targetSoc = targetSoc.toDouble(),
                                 notify = notify,
                                 enabled = enabled,
@@ -157,7 +208,7 @@ fun DischargeWindowDetailScreen(
             }
 
             // -- Control section --
-            ControlSection(windowId, status, detailState, viewModel)
+            ControlSection(windowId, startTime, durationMinutes, status, detailState, viewModel)
 
             // -- Message --
             detailState.message?.let { msg ->
@@ -171,7 +222,173 @@ fun DischargeWindowDetailScreen(
             }
         }
     }
+
+    // -- Time Picker Dialogs --
+
+    if (showStartPicker) {
+        TimePickerDialog(
+            title = "Start Time",
+            initialHour = parseTimeToMinutes(startTime) / 60,
+            initialMinute = parseTimeToMinutes(startTime) % 60,
+            onConfirm = { hour, minute ->
+                startTime = "%02d:%02d".format(hour, minute)
+                // Recalculate end time from new start + existing duration
+                endTime = calcEndTime(startTime, durationMinutes)
+                showStartPicker = false
+            },
+            onDismiss = { showStartPicker = false },
+        )
+    }
+
+    if (showEndPicker) {
+        TimePickerDialog(
+            title = "End Time",
+            initialHour = parseTimeToMinutes(endTime) / 60,
+            initialMinute = parseTimeToMinutes(endTime) % 60,
+            onConfirm = { hour, minute ->
+                endTime = "%02d:%02d".format(hour, minute)
+                // Recalculate duration from start to new end
+                durationMinutes = calcDuration(startTime, endTime)
+                showEndPicker = false
+            },
+            onDismiss = { showEndPicker = false },
+        )
+    }
+
+    if (showDurationPicker) {
+        DurationPickerDialog(
+            initialHours = durationMinutes / 60,
+            initialMinutes = durationMinutes % 60,
+            onConfirm = { hours, minutes ->
+                durationMinutes = hours * 60 + minutes
+                // Recalculate end time from start + new duration
+                endTime = calcEndTime(startTime, durationMinutes)
+                showDurationPicker = false
+            },
+            onDismiss = { showDurationPicker = false },
+        )
+    }
 }
+
+// ------------------------------------------------------------------
+// Time Picker Dialog (Material3 TimePicker in a dialog)
+// ------------------------------------------------------------------
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TimePickerDialog(
+    title: String,
+    initialHour: Int,
+    initialMinute: Int,
+    onConfirm: (hour: Int, minute: Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val state = rememberTimePickerState(
+        initialHour = initialHour,
+        initialMinute = initialMinute,
+        is24Hour = true,
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                TimePicker(state = state)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(state.hour, state.minute) },
+                colors = ButtonDefaults.buttonColors(containerColor = EnergyOrange),
+            ) {
+                Text("OK", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+// ------------------------------------------------------------------
+// Duration Picker Dialog (hours + minutes sliders)
+// ------------------------------------------------------------------
+
+@Composable
+private fun DurationPickerDialog(
+    initialHours: Int,
+    initialMinutes: Int,
+    onConfirm: (hours: Int, minutes: Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var hours by remember { mutableIntStateOf(initialHours) }
+    var minutes by remember { mutableIntStateOf(initialMinutes) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Duration") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                // Hours
+                Column {
+                    Text(
+                        "Hours: $hours",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                    )
+                    Slider(
+                        value = hours.toFloat(),
+                        onValueChange = { hours = it.toInt() },
+                        valueRange = 0f..23f,
+                        steps = 22,
+                        colors = SliderDefaults.colors(
+                            thumbColor = EnergyOrange,
+                            activeTrackColor = EnergyOrange,
+                        ),
+                    )
+                }
+                // Minutes
+                Column {
+                    Text(
+                        "Minutes: $minutes",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                    )
+                    Slider(
+                        value = minutes.toFloat(),
+                        onValueChange = { minutes = it.toInt() },
+                        valueRange = 0f..55f,
+                        steps = 10, // 5-min increments
+                        colors = SliderDefaults.colors(
+                            thumbColor = EnergyOrange,
+                            activeTrackColor = EnergyOrange,
+                        ),
+                    )
+                }
+                Text(
+                    "Total: ${hours}h ${minutes}m (${hours * 60 + minutes} min)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(hours, minutes) },
+                enabled = hours > 0 || minutes > 0,
+                colors = ButtonDefaults.buttonColors(containerColor = EnergyOrange),
+            ) {
+                Text("OK", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+// ------------------------------------------------------------------
+// Status section
+// ------------------------------------------------------------------
 
 @Composable
 private fun StatusSection(status: DischargeWindowStatus?) {
@@ -231,14 +448,20 @@ private fun StatusSection(status: DischargeWindowStatus?) {
     }
 }
 
+// ------------------------------------------------------------------
+// Configuration section
+// ------------------------------------------------------------------
+
 @Composable
 private fun ConfigSection(
     name: String,
     onNameChange: (String) -> Unit,
     startTime: String,
-    onStartTimeChange: (String) -> Unit,
-    durationMinutes: String,
-    onDurationChange: (String) -> Unit,
+    endTime: String,
+    durationMinutes: Int,
+    onStartTimeClick: () -> Unit,
+    onEndTimeClick: () -> Unit,
+    onDurationClick: () -> Unit,
     targetSoc: Float,
     onTargetSocChange: (Float) -> Unit,
     notify: Boolean,
@@ -246,6 +469,9 @@ private fun ConfigSection(
     enabled: Boolean,
     onEnabledChange: (Boolean) -> Unit,
 ) {
+    val durationHours = durationMinutes / 60
+    val durationMins = durationMinutes % 60
+
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = SurfaceContainer,
@@ -265,22 +491,25 @@ private fun ConfigSection(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
+            // Start / End / Duration — tappable fields
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TimeField(
+                    label = "Start",
                     value = startTime,
-                    onValueChange = onStartTimeChange,
-                    label = { Text("Start Time") },
-                    singleLine = true,
+                    onClick = onStartTimeClick,
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("HH:MM") },
                 )
-                OutlinedTextField(
-                    value = durationMinutes,
-                    onValueChange = { if (it.all { c -> c.isDigit() }) onDurationChange(it) },
-                    label = { Text("Duration (min)") },
-                    singleLine = true,
+                TimeField(
+                    label = "End",
+                    value = endTime,
+                    onClick = onEndTimeClick,
                     modifier = Modifier.weight(1f),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+                TimeField(
+                    label = "Duration",
+                    value = "${durationHours}h ${durationMins}m",
+                    onClick = onDurationClick,
+                    modifier = Modifier.weight(1f),
                 )
             }
 
@@ -293,7 +522,7 @@ private fun ConfigSection(
                     value = targetSoc,
                     onValueChange = onTargetSocChange,
                     valueRange = 0f..100f,
-                    steps = 19, // 5% increments
+                    steps = 19,
                     colors = SliderDefaults.colors(
                         thumbColor = EnergyOrange,
                         activeTrackColor = EnergyOrange,
@@ -331,13 +560,43 @@ private fun ConfigSection(
 }
 
 @Composable
+private fun TimeField(
+    label: String,
+    value: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = {},
+        label = { Text(label) },
+        readOnly = true,
+        singleLine = true,
+        modifier = modifier.clickable { onClick() },
+        enabled = false,
+        colors = OutlinedTextFieldDefaults.colors(
+            disabledTextColor = MaterialTheme.colorScheme.onSurface,
+            disabledBorderColor = MaterialTheme.colorScheme.outline,
+            disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        ),
+    )
+}
+
+// ------------------------------------------------------------------
+// Control section
+// ------------------------------------------------------------------
+
+@Composable
 private fun ControlSection(
     windowId: String,
+    startTime: String,
+    durationMinutes: Int,
     status: DischargeWindowStatus?,
     detailState: WindowDetailState,
     viewModel: SolarViewModel,
 ) {
     val isActive = status?.active == true
+    val canStart = canStartWindow(startTime, durationMinutes)
 
     Button(
         onClick = {
@@ -346,7 +605,7 @@ private fun ControlSection(
         },
         modifier = Modifier.fillMaxWidth().height(44.dp),
         shape = RoundedCornerShape(50),
-        enabled = !detailState.isStarting && !detailState.isStopping,
+        enabled = (isActive || canStart) && !detailState.isStarting && !detailState.isStopping,
         colors = ButtonDefaults.buttonColors(
             containerColor = if (isActive) MaterialTheme.colorScheme.error else EnergyOrange,
             contentColor = Color.White,
@@ -362,7 +621,11 @@ private fun ControlSection(
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                if (isActive) "Stop Discharge" else "Start Discharge",
+                when {
+                    isActive -> "Stop Discharge"
+                    canStart -> "Start Discharge"
+                    else -> "Window Expired"
+                },
                 style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
             )
         }
