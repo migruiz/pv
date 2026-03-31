@@ -2,6 +2,7 @@ package ovh.tenjo.pv
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -85,11 +86,12 @@ class SolarViewModel : ViewModel() {
     val chargeWindowDetail: StateFlow<ChargeWindowDetailState> = _chargeWindowDetail.asStateFlow()
 
 
+    private var autoRefreshJob: Job? = null
+
     init {
         refreshDashboard()
         loadWindows()
         loadChargeWindows()
-        startAutoRefresh()
     }
 
     // -- Dashboard --
@@ -378,10 +380,11 @@ class SolarViewModel : ViewModel() {
         _chargeWindowDetail.value = _chargeWindowDetail.value.copy(message = null)
     }
 
-    // -- Auto-refresh --
+    // -- Auto-refresh (lifecycle-aware) --
 
-    private fun startAutoRefresh() {
-        viewModelScope.launch {
+    fun startAutoRefresh() {
+        if (autoRefreshJob?.isActive == true) return
+        autoRefreshJob = viewModelScope.launch {
             while (isActive) {
                 delay(20_000)
                 loadDashboard(showLoading = false, showError = false)
@@ -389,5 +392,10 @@ class SolarViewModel : ViewModel() {
                 loadChargeWindowStatuses()
             }
         }
+    }
+
+    fun stopAutoRefresh() {
+        autoRefreshJob?.cancel()
+        autoRefreshJob = null
     }
 }

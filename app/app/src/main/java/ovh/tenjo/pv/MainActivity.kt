@@ -18,7 +18,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.ViewModelProvider
 import com.google.firebase.messaging.FirebaseMessaging
 import ovh.tenjo.pv.api.SolarApiClient
 import ovh.tenjo.pv.ui.ChargeWindowDetailScreen
@@ -28,6 +28,10 @@ import ovh.tenjo.pv.ui.DischargeWindowDetailScreen
 import ovh.tenjo.pv.ui.theme.PVManagerTheme
 
 class MainActivity : ComponentActivity() {
+
+    private val solarViewModel by lazy {
+        ViewModelProvider(this)[SolarViewModel::class.java]
+    }
 
     private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -54,7 +58,6 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             PVManagerTheme {
-                val solarViewModel: SolarViewModel = viewModel()
                 var selectedDischargeWindowId by remember { mutableStateOf<String?>(null) }
                 var selectedChargeWindowId by remember { mutableStateOf<String?>(null) }
                 var showCreateDialog by remember { mutableStateOf(false) }
@@ -102,5 +105,15 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        solarViewModel.startAutoRefresh()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        solarViewModel.stopAutoRefresh()
     }
 }
