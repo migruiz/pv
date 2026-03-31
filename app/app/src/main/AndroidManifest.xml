@@ -51,6 +51,19 @@
         <receiver
             android:name=".NotificationDismissReceiver"
             android:exported="false" />
+
+        <service
+            android:name=".ChargeWindowService"
+            android:foregroundServiceType="specialUse"
+            android:exported="false" />
+
+        <receiver
+            android:name=".StopChargeBroadcastReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".ChargeWindowDismissReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>
