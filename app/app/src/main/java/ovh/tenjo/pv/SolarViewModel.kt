@@ -102,13 +102,15 @@ class SolarViewModel : ViewModel() {
         loadDashboard(showLoading = false)
     }
 
-    private fun loadDashboard(showLoading: Boolean) {
+    private fun loadDashboard(showLoading: Boolean, showError: Boolean = true) {
         viewModelScope.launch {
-            _dashboard.value = _dashboard.value.copy(
-                isLoading = showLoading,
-                isRefreshing = !showLoading,
-                error = null,
-            )
+            if (showLoading || showError) {
+                _dashboard.value = _dashboard.value.copy(
+                    isLoading = showLoading,
+                    isRefreshing = !showLoading,
+                    error = null,
+                )
+            }
             try {
                 val d = api.getDashboard()
 
@@ -129,11 +131,13 @@ class SolarViewModel : ViewModel() {
                     isLoading = false,
                 )
             } catch (e: Exception) {
-                _dashboard.value = _dashboard.value.copy(
-                    isLoading = false,
-                    isRefreshing = false,
-                    error = e.message ?: "Connection failed",
-                )
+                if (showError) {
+                    _dashboard.value = _dashboard.value.copy(
+                        isLoading = false,
+                        isRefreshing = false,
+                        error = e.message ?: "Connection failed",
+                    )
+                }
             }
         }
     }
@@ -380,7 +384,7 @@ class SolarViewModel : ViewModel() {
         viewModelScope.launch {
             while (isActive) {
                 delay(20_000)
-                loadDashboard(showLoading = false)
+                loadDashboard(showLoading = false, showError = false)
                 loadStatuses()
                 loadChargeWindowStatuses()
             }
