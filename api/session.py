@@ -57,15 +57,43 @@ class SolarSession:
             except Exception as exc:
                 logger.warning("Cookie restore failed: %s", exc)
 
-        # Fresh login
+        # Fresh login — replicate FusionSolarClient._configure_session manually so
+        # we can tolerate a 503 on /unisess/v1/auth/session (Huawei's legacy SSO
+        # subsystem occasionally goes down independently of the rest of the portal).
+        # Passing truthy cookies to the constructor skips its strict auto-login.
         logger.info("Performing fresh FusionSolar login")
-        self._client = await asyncio.to_thread(
+        client = await asyncio.to_thread(
             FusionSolarClient,
             self._username, self._password, self._subdomain,
+            cookies={"_skip_auto_login": "1"},
         )
+        await asyncio.to_thread(self._fresh_login, client)
+        self._client = client
         self._save_cookies()
         logger.info("Login successful, cookies saved")
         return self._client
+
+    def _fresh_login(self, client: FusionSolarClient):
+        """Manual replacement for FusionSolarClient._configure_session.
+
+        Differs only in tolerating a non-200 response from
+        /unisess/v1/auth/session — see _try_set_unisess_csrf for why that's safe.
+        """
+        client._session.headers["User-Agent"] = USER_AGENT
+        client._login()
+        payload = client.keep_alive()
+        if not payload:
+            raise RuntimeError("Login failed: no payload from keep-alive")
+
+        r = client._session.get(
+            url=f"https://{self._subdomain}.fusionsolar.huawei.com"
+                "/rest/neteco/web/organization/v2/company/current",
+            params={"_": round(time.time() * 1000)},
+        )
+        r.raise_for_status()
+        client._company_id = r.json()["data"]["moDn"]
+
+        self._try_set_unisess_csrf(client)
 
     def _restore_session_state(self, client: FusionSolarClient):
         """Restore _company_id and roarand without calling _login()."""
@@ -83,16 +111,33 @@ class SolarSession:
         r.raise_for_status()
         client._company_id = r.json()["data"]["moDn"]
 
-        # CSRF token
-        r = client._session.get(
-            url=f"https://{self._subdomain}.fusionsolar.huawei.com"
-                "/unisess/v1/auth/session",
-        )
-        r.raise_for_status()
+        self._try_set_unisess_csrf(client)
+
+    def _try_set_unisess_csrf(self, client: FusionSolarClient):
+        """Best-effort: refresh roarand from the legacy unisess CSRF endpoint.
+
+        keep_alive() already populated roarand from the dpcloud keep-alive
+        payload, which Huawei's own web portal uses for both reads and writes.
+        The unisess endpoint provides an equivalent token from the older SSO
+        subsystem — when available we prefer it, but a 503 here is non-fatal.
+        """
         try:
+            r = client._session.get(
+                url=f"https://{self._subdomain}.fusionsolar.huawei.com"
+                    "/unisess/v1/auth/session",
+            )
+            if r.status_code != 200:
+                logger.warning(
+                    "unisess /auth/session returned %s; keeping dpcloud-issued roarand",
+                    r.status_code,
+                )
+                return
             client._session.headers["roarand"] = r.json()["csrfToken"]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "unisess /auth/session unavailable (%s); keeping dpcloud-issued roarand",
+                exc,
+            )
 
     # ------------------------------------------------------------------
     # Public helpers
