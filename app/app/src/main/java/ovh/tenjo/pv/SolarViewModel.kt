@@ -104,7 +104,7 @@ class SolarViewModel : ViewModel() {
         loadDashboard(showLoading = false)
     }
 
-    private fun loadDashboard(showLoading: Boolean, showError: Boolean = true) {
+    private fun loadDashboard(showLoading: Boolean, showError: Boolean = true): Job =
         viewModelScope.launch {
             if (showLoading || showError) {
                 _dashboard.value = _dashboard.value.copy(
@@ -142,7 +142,6 @@ class SolarViewModel : ViewModel() {
                 }
             }
         }
-    }
 
     // -- Discharge Windows --
 
@@ -385,11 +384,17 @@ class SolarViewModel : ViewModel() {
     fun startAutoRefresh() {
         if (autoRefreshJob?.isActive == true) return
         autoRefreshJob = viewModelScope.launch {
+            var tick = 0
             while (isActive) {
-                delay(20_000)
-                loadDashboard(showLoading = false, showError = false)
-                loadStatuses()
-                loadChargeWindowStatuses()
+                // Readings come straight from the inverter, refreshed on the Pi every 3 s
+                delay(3_000)
+                // Wait for the request so a slow network never stacks up overlapping calls
+                loadDashboard(showLoading = false, showError = false).join()
+                // Window statuses change slowly: keep roughly their old cadence
+                if (tick++ % 5 == 0) {
+                    loadStatuses()
+                    loadChargeWindowStatuses()
+                }
             }
         }
     }
