@@ -26,6 +26,8 @@ COPY main.py auth.py session.py mock_session.py config.py dependencies.py notifi
 COPY discharge/ discharge/
 COPY charge_windows/ charge_windows/
 COPY routers/ routers/
+COPY kindle_dashboard/ kindle_dashboard/
+COPY inverter/ inverter/
 RUN uv sync --frozen --no-dev
 
 # Symlink cookies to persistent volume so session.py's

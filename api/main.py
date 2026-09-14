@@ -13,13 +13,22 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 
 import notifications
-from config import BATTERY_DN, KEEP_ALIVE_INTERVAL, MOCK_MODE, MOCK_URL
+from config import (
+    BATTERY_DN,
+    INVERTER_HOST,
+    INVERTER_POLL_INTERVAL,
+    INVERTER_PORT,
+    KEEP_ALIVE_INTERVAL,
+    MOCK_MODE,
+    MOCK_URL,
+)
 from charge_windows.router_control import router as charge_control_router
 from charge_windows.router_windows import router as charge_windows_router
 from charge_windows.scheduler import ChargeWindowScheduler
 from discharge.router_control import compat_router, router as control_router
 from discharge.router_windows import router as windows_router
 from discharge.scheduler import WindowScheduler
+from kindle_dashboard.router import router as kindle_router
 from routers import dashboard, health
 
 load_dotenv()
@@ -50,6 +59,23 @@ async def lifespan(app: FastAPI):
     app.state.windows_changed = asyncio.Event()
 
     notifications.init_firebase()
+
+    # Live readings straight from the inverter; the cloud session is only used for battery control
+    if MOCK_MODE:
+        from inverter.mock_reader import MockInverterReader
+
+        inverter = MockInverterReader(session, interval=INVERTER_POLL_INTERVAL)
+    else:
+        from inverter.reader import InverterReader
+
+        inverter = InverterReader(
+            host=INVERTER_HOST,
+            port=INVERTER_PORT,
+            password=os.environ["INVERTER_INSTALLER_PASS"],
+            interval=INVERTER_POLL_INTERVAL,
+        )
+    app.state.inverter = inverter
+    inverter_task = asyncio.create_task(inverter.run())
 
     if not MOCK_MODE:
         try:
@@ -93,6 +119,8 @@ async def lifespan(app: FastAPI):
             task.cancel()
     if keep_alive_task:
         keep_alive_task.cancel()
+    inverter_task.cancel()
+    await inverter.stop()
     await session.shutdown()
 
 
@@ -100,7 +128,8 @@ app = FastAPI(title="PV Solar API", lifespan=lifespan)
 
 app.include_router(health.router)
 app.include_router(dashboard.router)
-app.include_router(control_router)    # Static paths first (/status, /{id}/start, /{id}/stop)
+app.include_router(kindle_router)
+app.include_router(control_router)   # Static paths first (/status, /{id}/start, /{id}/stop)
 app.include_router(windows_router)    # Dynamic path last (/{window_id} CRUD)
 app.include_router(compat_router)
 app.include_router(charge_control_router)  # Static paths first (/status, /{id}/start, /{id}/stop)

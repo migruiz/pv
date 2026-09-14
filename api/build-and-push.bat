@@ -39,7 +39,8 @@ if errorlevel 1 (
 )
 
 echo [INFO] Authenticating to Docker Hub...
-echo %DOCKERHUB_TOKEN% | docker login --username %DOCKERHUB_USERNAME% --password-stdin
+:: No space before the pipe: cmd would send it as part of the token
+echo %DOCKERHUB_TOKEN%| docker login --username %DOCKERHUB_USERNAME% --password-stdin
 if errorlevel 1 (
     echo [ERROR] Docker login failed.
     exit /b 1

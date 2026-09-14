@@ -2,17 +2,19 @@
 
 from fastapi import APIRouter, Depends
 
-from dependencies import get_session
+from dependencies import get_inverter, get_session
 from session import SolarSession
 
 router = APIRouter()
 
 
 @router.get("/health")
-async def health(session: SolarSession = Depends(get_session)):
-    """Check if the FusionSolar session is alive (no API key required)."""
+async def health(session: SolarSession = Depends(get_session), inverter=Depends(get_inverter)):
+    """FusionSolar session (still used for battery control) and inverter link. No API key required."""
     try:
         alive = await session.call("is_session_active")
-        return {"status": "ok" if alive else "session_expired"}
+        status = "ok" if alive else "session_expired"
     except Exception:
-        return {"status": "error"}
+        status = "error"
+    age = inverter.age()
+    return {"status": status, "inverter_reading_age_s": None if age is None else round(age, 1)}
