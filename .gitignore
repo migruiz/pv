@@ -9,3 +9,7 @@ __pycache__/
 api/firebase-sa.json
 app/app/google-services.json
 api/discharge_windows.json
+
+# Kindle token and USB install backups
+kindle/solar-dashboard-config.json
+kindle/backups/

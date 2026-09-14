@@ -1,0 +1,3 @@
+# Kindle scripts run on the device's Linux shell and LuaJIT; CRLF breaks them.
+kindle/**/*.sh text eol=lf
+kindle/**/*.lua text eol=lf
