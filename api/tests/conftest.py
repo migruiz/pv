@@ -33,22 +33,27 @@ def reset_mock_clock():
 
 @pytest.fixture()
 def config_path(tmp_path):
-    """Isolate config_store to a temp directory so tests don't touch dev files."""
+    """Isolate both window config stores to a temp directory so tests never read dev files.
+
+    Discharge and charge windows check each other for overlaps, so both stores must point at tmp_path.
+    """
     path = tmp_path / "discharge_windows.json"
-    original = config_store._cached_path
+    originals = (config_store._cached_path, charge_config_store._cached_path)
     config_store._cached_path = path
+    charge_config_store._cached_path = tmp_path / "charge_windows.json"
     yield path
-    config_store._cached_path = original
+    config_store._cached_path, charge_config_store._cached_path = originals
 
 
 @pytest.fixture()
 def charge_config_path(tmp_path):
-    """Isolate charge windows config_store to a temp directory."""
+    """Isolate both window config stores to a temp directory (see config_path)."""
     path = tmp_path / "charge_windows.json"
-    original = charge_config_store._cached_path
+    originals = (config_store._cached_path, charge_config_store._cached_path)
+    config_store._cached_path = tmp_path / "discharge_windows.json"
     charge_config_store._cached_path = path
     yield path
-    charge_config_store._cached_path = original
+    config_store._cached_path, charge_config_store._cached_path = originals
 
 
 @pytest.fixture()
