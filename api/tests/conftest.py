@@ -31,6 +31,12 @@ def reset_mock_clock():
     mock_clock.reset()
 
 
+@pytest.fixture(autouse=True)
+def isolate_active_charge_state(tmp_path, monkeypatch):
+    """Write charge window restart-recovery files to tmp_path, never into api/ where they used to pile up."""
+    monkeypatch.setattr(charge_config_store, "_active_dir", lambda: tmp_path)
+
+
 @pytest.fixture()
 def config_path(tmp_path):
     """Isolate both window config stores to a temp directory so tests never read dev files.
