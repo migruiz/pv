@@ -1,12 +1,14 @@
 """Pure drawing code for the 800x600 1-bit Kindle solar dashboard."""
 
 import io
-from datetime import datetime
+from collections.abc import Sequence
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
 WIDTH, HEIGHT = 800, 600
+HISTORY_HOURS = 12
 FONT_DIR = Path(__file__).parent / "fonts"
 
 
@@ -43,7 +45,7 @@ def reading_with_symbols(draw, center, text, face, before=None, after=None, gap=
 
 
 def power_reading(draw, xy, reading):
-    """Largest bold reading that fits the power column, with a small 'k' suffix."""
+    """Draw a fitted power reading and return the top of its number's bounds."""
     size = 132
     while size > 32:
         face = font(size, True)
@@ -57,6 +59,7 @@ def power_reading(draw, xy, reading):
     x = min(xy[0], WIDTH - 12 - (kr - kl) - 4 - (right - left) / 2)
     reading_with_symbols(draw, (x, xy[1] + (bottom - top) / 2), reading, face,
                          after=("k", suffix_font), gap=4)
+    return xy[1] - (bottom - top) / 2
 
 
 def draw_sun(draw, center, radius=17):
@@ -80,7 +83,7 @@ def draw_bolt(draw, center):
     draw.polygon(points, fill="black")
 
 
-def draw_battery(draw, box, soc):
+def draw_battery(draw, box, soc, history: Sequence[float] = ()):
     x1, y1, x2, y2 = box
     draw.rounded_rectangle(box, radius=13, outline="black", width=7)
     terminal_width = 18
@@ -92,31 +95,135 @@ def draw_battery(draw, box, soc):
     fill_width = round((inner_right - inner_left) * soc / 100)
     if fill_width > 0:
         draw.rectangle((inner_left, inner_top, inner_left + fill_width, inner_bottom), fill="black")
+    if len(history) > 1:
+        # Past 12 hours from left to right; charge percentage from bottom to top.
+        # Anchor the latest sample to the displayed SOC at the positive end.
+        samples = [*history[:-1], soc]
+        points = [
+            (round(i / (len(samples) - 1) * (inner_right - inner_left)),
+             round((1 - max(0, min(100, sample)) / 100) * (inner_bottom - inner_top)))
+            for i, sample in enumerate(samples)
+        ]
+        draw_battery_trace(draw, (inner_left, inner_top, inner_right, inner_bottom), fill_width, points)
 
 
-def render(data: dict, updated_at: datetime, stale: bool = False) -> Image.Image:
-    """Draw the dashboard. `updated_at` is shown as-is, so pass a Dublin-local time."""
+def draw_battery_trace(draw, box, fill_width, points):
+    """Clip the trace to the battery interior and invert it over the charge fill."""
+    left, top, right, bottom = box
+    width, height = right - left + 1, bottom - top + 1
+    trace = Image.new("1", (width, height), 0)
+    ImageDraw.Draw(trace).line(points, fill=1, width=3, joint="curve")
+    # The fill rectangle includes its right edge. At 0% there is no fill.
+    split = min(width, fill_width + 1) if fill_width > 0 else 0
+    if split:
+        draw.bitmap((left, top), trace.crop((0, 0, split, height)), fill="white")
+    if split < width:
+        draw.bitmap((left + split, top), trace.crop((split, 0, width, height)), fill="black")
+
+
+def draw_power_history(draw, box, samples: Sequence[float], *, scale_max=5.5, guide_kw=3):
+    """Draw twelve hours of power strictly within the plot's bounds."""
+    left, top, right, bottom = box
+    for level in (0, guide_kw, scale_max):
+        y = round(bottom - level / scale_max * (bottom - top))
+        for x in range(left, right, 8):
+            draw.line((x, y, min(x + 2, right), y), fill="black")
+    draw.line((left, bottom, right, bottom), fill="black", width=2)
+    if len(samples) > 1:
+        # A local mask clips the trace at the plot edge. Keep the true sample
+        # values so over-range intervals disappear instead of flattening at max.
+        trace = Image.new("1", (right - left + 1, bottom - top + 1), 0)
+        points = [
+            (round(i * (right - left) / (len(samples) - 1)),
+             round((1 - max(0, sample) / scale_max) * (bottom - top)))
+            for i, sample in enumerate(samples)
+        ]
+        ImageDraw.Draw(trace).line(points, fill=1, width=3, joint="curve")
+        draw.bitmap((left, top), trace, fill="black")
+    # Place scale labels inside the plot, just below their dotted guide.
+    label_font = font(17)
+    for level in (scale_max, guide_kw):
+        label = f"{level:g}"
+        label_xy = (left + 8, round(bottom - level / scale_max * (bottom - top)) + 7)
+        bounds = draw.textbbox(label_xy, label, font=label_font, anchor="lt")
+        draw.rectangle((bounds[0] - 2, bounds[1] - 2, bounds[2] + 2, bounds[3] + 2), fill="white")
+        draw.text(label_xy, label, font=label_font, anchor="lt", fill="black")
+
+
+def draw_history_hours(draw, left, right, baseline, updated_at):
+    """Label the start, midpoint, and present below the axis."""
+    for fraction, anchor in ((0, "lt"), (0.5, "mt")):
+        at = updated_at - timedelta(hours=HISTORY_HOURS * (1 - fraction))
+        # Round to the closest hour; minutes are intentionally omitted.
+        hour = (at + timedelta(minutes=30)).hour
+        label = f"{hour % 12 or 12}{'a' if hour < 12 else 'p'}"
+        x = round(left + fraction * (right - left))
+        draw.text((x, baseline + 7), label, font=font(17), anchor=anchor, fill="black")
+    draw.text((right, baseline + 7), "now", font=font(17), anchor="rt", fill="black")
+
+
+def render(data: dict, updated_at: datetime, stale: bool = False, *,
+           history: dict[str, Sequence[float]] | None = None) -> Image.Image:
+    """Draw the dashboard; every history spans now − HISTORY_HOURS through now.
+
+    Samples must be evenly spaced and ordered oldest to newest. `updated_at`
+    is shown as-is in the legacy layout, so pass a Dublin-local time.
+    """
     image = Image.new("1", (WIDTH, HEIGHT), 1)
     draw = ImageDraw.Draw(image)
     draw.rectangle((0, 0, WIDTH - 1, HEIGHT - 1), outline="black", width=4)
-    draw.line((500, 24, 500, HEIGHT - 52), fill="black", width=3)
+    chart_layout = history is not None
+    # Center the divider in the gap from the battery terminal (456) to charts (522).
+    divider_x = 489 if chart_layout else 500
+    draw.line((divider_x, 24, divider_x, HEIGHT - (24 if chart_layout else 52)), fill="black", width=3)
 
-    # Left: battery state. The empty time is a visual placeholder until the
-    # prediction method has been agreed.
+    if history is None:
+        draw.line((522, 295, 776, 295), fill="black", width=3)
+        power_reading(draw, (650, 127), f"{value(data, 'pv_kw'):.1f}")
+        draw_sun(draw, (650, 235))
+        power_reading(draw, (650, 400), f"{value(data, 'home_kw'):.1f}")
+        draw_bolt(draw, (650, 500))
+    else:
+        # Two identical reading/chart groups, evenly spaced down the column.
+        # The chart baselines remain axes; there is no separator between groups.
+        for key, offset in (("pv_kw", 0), ("home_kw", 288)):
+            chart_bottom = 270 + offset
+            draw_power_history(draw, (522, 148 + offset, 776, chart_bottom), history.get(key, ()),
+                               scale_max=5 if key == "pv_kw" else 3,
+                               guide_kw=2 if key == "pv_kw" else 1)
+            draw_history_hours(draw, 522, 776, chart_bottom, updated_at)
+            # The current reading has its own space above the clipped chart.
+            number_top = power_reading(draw, (650, 80 + offset), f"{value(data, key):.1f}")
+            if key == "pv_kw":
+                production_top = number_top
+
+    # Left: align the visible battery digits with production, and the bottom
+    # of the placeholder time with the consumption chart's horizontal axis.
     soc = max(0.0, min(100.0, value(data, "battery_soc")))
-    reading_with_symbols(draw, (250, 185), f"{soc:.0f}", font(184, True), after=("%", font(43)))
-    draw_battery(draw, (44, 253, 431, 351), soc)
-    reading_with_symbols(draw, (250, 522), "11:40", font(112, True),
+    soc_text, soc_font = f"{soc:.0f}", font(184, True)
+    soc_baseline, time_baseline = 185, 522
+    if chart_layout:
+        _, top, _, bottom = draw.textbbox((0, 0), soc_text, font=soc_font)
+        soc_baseline = production_top + bottom - top
+        time_baseline = chart_bottom + 1  # Text bounds exclude the last row.
+    reading_with_symbols(draw, (250, soc_baseline), soc_text,
+                         soc_font, after=("%", font(43)))
+    time_font = font(112, True)
+    battery_box = (44, 253, 431, 351)
+    if chart_layout:
+        # Fill the available gap while preserving equal margins to the text.
+        _, time_top, _, time_bottom = draw.textbbox((0, 0), "11:40", font=time_font)
+        margin = 70
+        battery_box = (44, round(soc_baseline + margin), 431,
+                       round(time_baseline - (time_bottom - time_top) - margin))
+    draw_battery(draw, battery_box, soc, history.get("battery_soc", ()) if chart_layout else ())
+    if chart_layout:
+        draw_history_hours(draw, battery_box[0] + 12, battery_box[2] - 12, battery_box[3], updated_at)
+    reading_with_symbols(draw, (250, time_baseline), "11:40", time_font,
                          before=("↓", font(38)), after=("p", font(38)))
 
-    # Right: icon-only live power readings.
-    power_reading(draw, (650, 127), f"{value(data, 'pv_kw'):.1f}")
-    draw_sun(draw, (650, 235))
-    draw.line((522, 295, 776, 295), fill="black", width=3)
-    power_reading(draw, (650, 400), f"{value(data, 'home_kw'):.1f}")
-    draw_bolt(draw, (650, 500))
-
-    centered(draw, (WIDTH / 2, 568), updated_at.strftime("Updated %H:%M:%S"), font(17))
+    if not chart_layout:
+        centered(draw, (WIDTH / 2, 568), updated_at.strftime("Updated %H:%M:%S"), font(17))
 
     if stale:
         draw.rectangle((4, 544, WIDTH - 5, HEIGHT - 5), fill="black")
@@ -124,7 +231,8 @@ def render(data: dict, updated_at: datetime, stale: bool = False) -> Image.Image
     return image
 
 
-def render_png(data: dict, updated_at: datetime, stale: bool = False) -> bytes:
+def render_png(data: dict, updated_at: datetime, stale: bool = False, *,
+               history: dict[str, Sequence[float]] | None = None) -> bytes:
     output = io.BytesIO()
-    render(data, updated_at, stale).save(output, format="PNG", optimize=True)
+    render(data, updated_at, stale, history=history).save(output, format="PNG", optimize=True)
     return output.getvalue()

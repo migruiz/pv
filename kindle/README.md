@@ -51,6 +51,29 @@ The Kindle uses the LAN address `http://192.168.0.11:8100/dashboard.png`, not `p
 3. `python kindle/install.py` (pass another drive if needed: `python kindle/install.py E:/`). It also removes device files this version no longer ships (such as the old `suspend.sh`), after backing them up.
 4. Eject, unplug, then KUAL → Solar dashboard.
 
+## Local chart layout preview
+
+From `api/`, run `uv run python ../kindle/preview.py`, then open
+`http://127.0.0.1:8765/`. This preview renders an 800x600 monochrome PNG at
+460x345 browser pixels and refreshes every 2 seconds.
+
+All preview readings and history are mock data. All three charts share a
+12-hour horizontal axis: **now minus 12 hours at the left, now at the right**,
+using 145 samples spaced five minutes apart. The production chart has guides at
+5 and 2 kW. History is clipped to the chart bounds, keeping the number's area clear;
+portions above 5 kW are hidden rather than flattened along the top guide.
+Mock production includes hour-long plateaus at 7, 6.5, 5.5, and 6 kW to demonstrate
+this clipping. The consumption chart uses 3 and 1 kW guides, likewise clipping
+anything above 3 kW to keep its reading clear.
+Each chart labels the start and midpoint below its baseline with Dublin hours
+rounded to the nearest hour (for example, `11p` and `5a`), without minutes,
+and labels the right endpoint `now`.
+Inside the battery, 0–100% runs bottom to top;
+the latest point ends at the positive terminal side at the displayed percentage.
+The trace is white over the black charge fill and black over the unfilled area.
+The renderer's optional `history` argument enables this layout; the production
+endpoint retains its existing layout until real history is implemented.
+
 ## Tests
 
 ```bash

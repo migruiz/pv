@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kindle chart layout · Mock data</title>
+<style>
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; width: 460px; height: 345px; background: white; }
+main { width: 460px; height: 345px; margin: 0; }
+header, #status { display: none; }
+img { display: block; width: 460px; height: 345px; margin: 0; }
+</style></head><body><main>
+<header><h1>Kindle solar dashboard</h1><span>Refreshes every 2 seconds</span></header>
+<img id="dashboard" width="800" height="600" alt="Solar dashboard PNG sent to the Kindle">
+<p id="status" role="status">Loading the Kindle image...</p>
+<script>
+const img = document.getElementById('dashboard');
+const status = document.getElementById('status');
+let busy = false, currentUrl = null, count = 0;
+async function refresh() {
+  if (busy) return;
+  busy = true;
+  let nextUrl = null;
+  try {
+    const response = await fetch('/dashboard.png?t=' + Date.now(), {cache: 'no-store', signal: AbortSignal.timeout(8000)});
+    if (!response.ok) throw new Error('Image unavailable');
+    nextUrl = URL.createObjectURL(await response.blob());
+    const next = new Image(); next.src = nextUrl; await next.decode();
+    const previous = currentUrl; img.src = nextUrl; currentUrl = nextUrl; nextUrl = null;
+    if (previous) URL.revokeObjectURL(previous);
+    count++;
+    status.textContent = 'Image received ' + new Date().toLocaleTimeString() + ' · Refresh ' + count;
+  } catch (error) {
+    status.textContent = 'Could not refresh. Keeping the last image and retrying every 2 seconds.';
+  } finally {
+    if (nextUrl) URL.revokeObjectURL(nextUrl);
+    busy = false;
+  }
+}
+refresh(); setInterval(refresh, 2000);
+</script></main></body></html>
