@@ -144,6 +144,33 @@ def draw_empty_battery(draw, box):
                            fill="white", outline="black", width=3)
 
 
+def draw_grid_export(draw, center_x, top, export_kw):
+    """A compact electricity pylon with the current export power below it."""
+    cx, bottom = center_x, top + 52
+
+    def stroke(coords):
+        # Shrink the pylon around its bottom center, keeping the value in place.
+        points = [(round(cx + (x - cx) * 0.75),
+                   round(bottom + 3 + (y - bottom - 3) * 0.75))
+                  for x, y in zip(coords[::2], coords[1::2])]
+        draw.line(points, fill="black", width=2)
+
+    stroke((cx - 6, top, cx + 6, top))
+    stroke((cx - 6, top, cx - 22, bottom))
+    stroke((cx + 6, top, cx + 22, bottom))
+    for offset, reach in ((12, 24), (27, 28)):
+        y = top + offset
+        stroke((cx - reach, y, cx, y - 9, cx + reach, y, cx - reach, y))
+        for x in (cx - reach, cx + reach):
+            stroke((x, y, x, y + 6))
+    for upper, lower in ((12, 27), (27, 40), (40, 52)):
+        a, b = round(6 + 16 * upper / 52), round(6 + 16 * lower / 52)
+        stroke((cx - a, top + upper, cx + b, top + lower))
+        stroke((cx + a, top + upper, cx - b, top + lower))
+    stroke((cx - 28, bottom + 3, cx + 28, bottom + 3))
+    centered(draw, (cx, bottom + 27), f"{export_kw:.1f}k", font(20))
+
+
 def draw_power_history(draw, box, samples: Sequence[float], *, scale_max=5.5, guide_kw=3):
     """Draw twelve hours of power strictly within the plot's bounds."""
     left, top, right, bottom = box
@@ -224,6 +251,13 @@ def render(data: dict, updated_at: datetime, stale: bool = False, *,
     # of the placeholder time with the consumption chart's horizontal axis.
     soc = max(0.0, min(100.0, value(data, "battery_soc")))
     soc_text, soc_font = f"{soc:.0f}", font(184, True)
+    exporting = data.get("grid_importing") is False and value(data, "grid_kw") > 0
+    if chart_layout and exporting:
+        # Reserve the pylon's space even when SOC has three digits.
+        size = 184
+        while 250 - soc_font.getbbox(soc_text)[2] / 2 + soc_font.getmask(soc_text).getbbox()[0] < 112:
+            size -= 2
+            soc_font = font(size, True)
     soc_baseline, time_baseline = 185, 522
     if chart_layout:
         _, top, _, bottom = draw.textbbox((0, 0), soc_text, font=soc_font)
@@ -232,6 +266,8 @@ def render(data: dict, updated_at: datetime, stale: bool = False, *,
     reading_with_symbols(draw, (250, soc_baseline), soc_text,
                          soc_font, after=("%", font(43)))
     if chart_layout:
+        if exporting:
+            draw_grid_export(draw, 60, 84, value(data, "grid_kw"))
         # Keep the percentage untouched; align the energy label with its left edge.
         number_left, _, number_right, _ = draw.textbbox((0, 0), soc_text, font=soc_font)
         pl, pt, pr, pb = draw.textbbox((0, 0), "%", font=font(43))

@@ -66,10 +66,12 @@ HISTORY = mock_history()
 READINGS = {key: samples[-1] for key, samples in HISTORY.items()}
 
 
-def battery_preview(state):
+def battery_preview(state, grid_state="exporting"):
     """Keep the recent mock history consistent with the selected badge."""
     readings = {**READINGS, "battery_charging": state == "charging",
-                "battery_charge_discharge_kw": 0 if state == "idle" else 0.9}
+                "battery_charge_discharge_kw": 0 if state == "idle" else 0.9,
+                "grid_kw": 0 if grid_state == "idle" else 3.2,
+                "grid_importing": grid_state == "importing"}
     history = {**HISTORY, "battery_soc": list(HISTORY["battery_soc"])}
     if state in ("charging", "idle"):
         soc = readings["battery_soc"]
@@ -88,7 +90,10 @@ class Handler(BaseHTTPRequestHandler):
             state = parse_qs(request.query).get("battery", ["discharging"])[0]
             if state not in ("charging", "discharging", "idle"):
                 state = "discharging"
-            readings, history = battery_preview(state)
+            grid_state = parse_qs(request.query).get("grid", ["exporting"])[0]
+            if grid_state not in ("exporting", "importing", "idle"):
+                grid_state = "exporting"
+            readings, history = battery_preview(state, grid_state)
             data = render_png(readings, datetime.now(ZoneInfo("Europe/Dublin")), history=history)
             content_type, status = "image/png", 200
         elif path == "/favicon.ico":

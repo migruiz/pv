@@ -80,6 +80,9 @@ The placeholder empty time has a small upright empty-battery icon before it.
 A remaining-energy value (compact `3.5k` format) is left-aligned above the percent
 symbol, using SOC times the configured 4.8 kWh usable capacity; the percentage
 position stays fixed.
+A grid pylon and export power appear to the left of the percentage only when
+`grid_importing` is false and `grid_kw` is positive. The preview defaults to a
+mock 3.2 kW export; use `&grid=importing` or `&grid=idle` to hide the indicator.
 The renderer's optional `history` argument enables this layout; the production
 endpoint retains its existing layout until real history is implemented.
 
