@@ -87,7 +87,7 @@ def draw_bolt(draw, center):
     draw.polygon(points, fill="black")
 
 
-def draw_battery(draw, box, soc, history: Sequence[float | None] = ()):
+def draw_battery(draw, box, soc, history: Sequence[float | None] = (), positions=None):
     x1, y1, x2, y2 = box
     draw.rounded_rectangle(box, radius=13, outline="black", width=7)
     terminal_width = 18
@@ -105,7 +105,7 @@ def draw_battery(draw, box, soc, history: Sequence[float | None] = ()):
         samples = [*history[:-1], soc]
         points = [
             None if sample is None else
-            (round(i / (len(samples) - 1) * (inner_right - inner_left)),
+            (round((positions[i] if positions is not None else i / (len(samples) - 1)) * (inner_right - inner_left)),
              round((1 - max(0, min(100, sample)) / 100) * (inner_bottom - inner_top)))
             for i, sample in enumerate(samples)
         ]
@@ -200,7 +200,7 @@ def draw_grid_export(draw, center_x, top, export_kw):
     centered(draw, (cx, bottom + 27), f"{export_kw:.1f}k", font(20))
 
 
-def draw_power_history(draw, box, samples: Sequence[float | None], *, scale_max=5.5, guide_kw=3):
+def draw_power_history(draw, box, samples: Sequence[float | None], *, scale_max=5.5, guide_kw=3, positions=None):
     """Draw twelve hours of power strictly within the plot's bounds."""
     left, top, right, bottom = box
     for level in (0, guide_kw, scale_max):
@@ -214,7 +214,7 @@ def draw_power_history(draw, box, samples: Sequence[float | None], *, scale_max=
         trace = Image.new("1", (right - left + 1, bottom - top + 1), 0)
         points = [
             None if sample is None else
-            (round(i * (right - left) / (len(samples) - 1)),
+            (round((positions[i] if positions is not None else i / (len(samples) - 1)) * (right - left)),
              round((1 - max(0, sample) / scale_max) * (bottom - top)))
             for i, sample in enumerate(samples)
         ]
@@ -243,10 +243,12 @@ def draw_history_hours(draw, left, right, baseline, updated_at):
 
 
 def render(data: dict, updated_at: datetime, stale: bool = False, *,
-           history: dict[str, Sequence[float | None]] | None = None) -> Image.Image:
+           history: dict[str, Sequence[float | None]] | None = None, history_positions=None) -> Image.Image:
     """Draw the dashboard; every history spans now − HISTORY_HOURS through now.
 
-    Samples must be evenly spaced and ordered oldest to newest; None is a gap. `updated_at`
+    Samples are ordered oldest to newest; None is a gap. Optional positions
+    give true fractions of the 12-hour window for unevenly spaced history.
+    Without positions samples are evenly spaced. `updated_at`
     is shown as-is in the legacy layout, so pass a Dublin-local time.
     """
     image = Image.new("1", (WIDTH, HEIGHT), 1)
@@ -270,7 +272,7 @@ def render(data: dict, updated_at: datetime, stale: bool = False, *,
             chart_bottom = 270 + offset
             draw_power_history(draw, (522, 148 + offset, 776, chart_bottom), history.get(key, ()),
                                scale_max=5 if key == "pv_kw" else 3,
-                               guide_kw=2 if key == "pv_kw" else 1)
+                               guide_kw=2 if key == "pv_kw" else 1, positions=history_positions)
             draw_history_hours(draw, 522, 776, chart_bottom, updated_at)
             # The current reading has its own space above the clipped chart.
             number_top = power_reading(draw, (650, 80 + offset), f"{value(data, key):.1f}")
@@ -317,7 +319,7 @@ def render(data: dict, updated_at: datetime, stale: bool = False, *,
         margin = 70
         battery_box = (44, round(soc_baseline + margin), 431,
                        round(time_baseline - (time_bottom - time_top) - margin))
-    draw_battery(draw, battery_box, soc, history.get("battery_soc", ()) if chart_layout else ())
+    draw_battery(draw, battery_box, soc, history.get("battery_soc", ()) if chart_layout else (), positions=history_positions)
     if chart_layout:
         charging = data.get("battery_charging")
         if value(data, "battery_charge_discharge_kw") >= FLOW_ICON_MIN_KW and isinstance(charging, bool):
@@ -342,7 +344,7 @@ def render(data: dict, updated_at: datetime, stale: bool = False, *,
 
 
 def render_png(data: dict, updated_at: datetime, stale: bool = False, *,
-               history: dict[str, Sequence[float | None]] | None = None) -> bytes:
+               history: dict[str, Sequence[float | None]] | None = None, history_positions=None) -> bytes:
     output = io.BytesIO()
-    render(data, updated_at, stale, history=history).save(output, format="PNG", optimize=True)
+    render(data, updated_at, stale, history=history, history_positions=history_positions).save(output, format="PNG", optimize=True)
     return output.getvalue()

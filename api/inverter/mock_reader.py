@@ -85,13 +85,14 @@ def parse_flow(flow_data: dict) -> dict:
 
 
 class MockInverterReader:
-    def __init__(self, session, interval: float = 3.0, stale_after: float = 30.0):
+    def __init__(self, session, interval: float = 3.0, stale_after: float = 30.0, on_reading=None):
         self._session = session
         self.interval = interval
         self._stale_after = stale_after
         self._latest: dict | None = None
         self._updated_at: float | None = None
         self._last_error: str | None = None
+        self._on_reading = on_reading
 
     def dashboard(self) -> dict:
         age = self.age()
@@ -119,6 +120,8 @@ class MockInverterReader:
                 self._latest = await self._read()
                 self._updated_at = time.time()
                 self._last_error = None
+                if self._on_reading:
+                    await self._on_reading(self.dashboard())
             except Exception as exc:
                 self._last_error = str(exc)
             await asyncio.sleep(self.interval)

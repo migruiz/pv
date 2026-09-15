@@ -46,6 +46,7 @@ class InverterReader:
         settle_s: float = 2.0,
         client_factory=create_modbus_client,
         clock=time.time,
+        on_reading=None,
     ):
         self._host = host
         self._port = port
@@ -58,6 +59,7 @@ class InverterReader:
         self._settle_s = settle_s
         self._client_factory = client_factory
         self._clock = clock
+        self._on_reading = on_reading
 
         self._client = None
         self._values: dict = {}
@@ -172,6 +174,12 @@ class InverterReader:
             await self._read_slow()
         # Publish once the whole round is in, so the first reading never shows default settings/totals
         self._updated_at = self._clock()
+        if self._on_reading:
+            try:
+                await self._on_reading(self.dashboard())
+            except Exception:
+                # A storage problem must not trigger Modbus reconnects or hide live data.
+                logger.exception("Could not persist inverter history")
 
     async def _read_slow(self):
         """Settings and lifetime totals change rarely; a failed read keeps the previous values."""

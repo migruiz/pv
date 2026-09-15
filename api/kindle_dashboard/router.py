@@ -5,7 +5,7 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Request, Response
 
 import mock_clock
 from auth import require_kindle_token
@@ -34,7 +34,7 @@ def _reading_time(data: dict) -> datetime:
 
 
 @router.get("/dashboard.png", response_class=Response)
-async def get_dashboard_png(inverter=Depends(get_inverter)):
+async def get_dashboard_png(request: Request, inverter=Depends(get_inverter)):
     """800x600 1-bit PNG. Always 200 so the Kindle keeps showing something useful."""
     global _last_good, _cached
     try:
@@ -46,7 +46,14 @@ async def get_dashboard_png(inverter=Depends(get_inverter)):
             logger.warning("Kindle dashboard serving stale data: %s", exc)
         (data, updated_at), stale = _last_good or ({}, mock_clock.get_now()), True
 
-    key = (updated_at, stale)
+    store = getattr(request.app.state, 'history', None)
+    key = (updated_at, stale, store.revision if store else 0)
     if _cached is None or _cached[0] != key:
-        _cached = (key, await asyncio.to_thread(render_png, data, updated_at, stale))
+        try:
+            history, positions = await asyncio.to_thread(store.chart, updated_at, data) if store else ({}, [])
+        except Exception:
+            logger.exception("Could not read chart history; rendering current readings")
+            history, positions = {}, []
+        _cached = (key, await asyncio.to_thread(render_png, data, updated_at, stale,
+                                               history=history, history_positions=positions))
     return Response(_cached[1], media_type="image/png", headers={"Cache-Control": "no-store"})

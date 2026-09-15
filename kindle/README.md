@@ -93,8 +93,8 @@ position stays fixed.
 A grid pylon and export power appear to the left of the percentage only when
 `grid_importing` is false and `grid_kw` is at least 0.1 kW. The preview defaults to a
 mock 3.2 kW export; use `&grid=importing` or `&grid=idle` to hide the indicator.
-The renderer's optional `history` argument enables this layout; the production
-endpoint retains its existing layout until real history is implemented.
+The production endpoint uses this layout with stored history and live inverter
+readings. The optional `history` argument also allows standalone previews.
 
 ### Simple sunset battery estimate
 
@@ -144,8 +144,29 @@ Device history uses `1.7976931348623157e+308` for unavailable/future samples;
 plant history uses `--`. Preserve those as missing, never zero. The plant's
 `productPower` differed slightly from device DC power, so use device `30017`
 for consistency with current solar readings. Plant `chargeAndDisChargePower`
-uses the opposite sign to device `30005`. Backfill and ongoing database
-ingestion are not yet connected to the API or preview.
+uses the opposite sign to device `30005`.
+
+### Persistent API history
+
+The API stores history in `/data/history.sqlite3` on its existing Docker volume
+(local default: `api/history.sqlite3`; override with `HISTORY_DB_PATH`). Each
+successful inverter polling round updates a one-minute record: solar and home
+power are averaged across the polls, while SOC is the latest percentage.
+Thirty days are retained. SQLite uses WAL mode, and disk I/O runs off the async
+event loop. Storage failures do not reconnect the inverter or hide live readings.
+
+On first deployment, a background job seeds the preceding twelve hours from
+FusionSolar using the existing serialized cloud session. It tries at most three
+times per startup and records completion in the database. Once seeded, restarts
+do not request cloud chart history again. Local records take precedence over
+cloud samples. If initial backfill is unavailable, live collection continues.
+
+`/dashboard.png` reads only the inverter cache and local database. It makes no
+cloud or inverter requests itself. All charts use real timestamps, ending at
+the current reading and starting twelve hours earlier; the renderer connects
+adjacent five-minute cloud points and minute-level local points, leaving longer
+outages blank. The cache is invalidated both by new readings and completed seed
+imports. Existing Kindle authentication, polling and stale-data banner remain.
 
 ## Tests
 

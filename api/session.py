@@ -150,6 +150,14 @@ class SolarSession:
             fn = getattr(client, method_name)
             return await asyncio.to_thread(fn, *args, **kwargs)
 
+    async def get_chart_history(self, start, end):
+        """One-time backfill through the same serialized cloud session."""
+        from kindle_dashboard.backfill import fetch_history
+
+        async with self._lock:
+            client = await self._get_or_create_client()
+            return await asyncio.to_thread(fetch_history, client, start, end)
+
     async def post_config_signals(self, device_dn: str, change_values: list[dict]):
         """POST to set-config-signals (raw call bypassing FusionSolarPy).
         change_values: list of {"id": "<signal_id>", "value": "<value>"}

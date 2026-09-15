@@ -7,6 +7,7 @@ Run with:  uvicorn main:app --reload
 import asyncio
 import logging
 import os
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -60,11 +61,21 @@ async def lifespan(app: FastAPI):
 
     notifications.init_firebase()
 
+    from kindle_dashboard.history import HistoryStore
+    from kindle_dashboard.backfill import seed_history
+
+    default_history = Path('/data/history.sqlite3') if Path('/data').is_dir() else Path(__file__).parent / 'history.sqlite3'
+    history = HistoryStore(os.environ.get('HISTORY_DB_PATH', str(default_history)))
+    app.state.history = history
+
+    async def record_history(data):
+        await asyncio.to_thread(history.record, data)
+
     # Live readings straight from the inverter; the cloud session is only used for battery control
     if MOCK_MODE:
         from inverter.mock_reader import MockInverterReader
 
-        inverter = MockInverterReader(session, interval=INVERTER_POLL_INTERVAL)
+        inverter = MockInverterReader(session, interval=INVERTER_POLL_INTERVAL, on_reading=record_history)
     else:
         from inverter.reader import InverterReader
 
@@ -73,6 +84,7 @@ async def lifespan(app: FastAPI):
             port=INVERTER_PORT,
             password=os.environ["INVERTER_INSTALLER_PASS"],
             interval=INVERTER_POLL_INTERVAL,
+            on_reading=record_history,
         )
     app.state.inverter = inverter
     inverter_task = asyncio.create_task(inverter.run())
@@ -85,7 +97,9 @@ async def lifespan(app: FastAPI):
             logger.error("Initial connection failed: %s", exc)
 
     keep_alive_task = None
+    history_seed_task = None
     if not MOCK_MODE:
+        history_seed_task = asyncio.create_task(seed_history(session, history))
         async def _keep_alive_loop():
             while True:
                 await asyncio.sleep(KEEP_ALIVE_INTERVAL)
@@ -120,8 +134,12 @@ async def lifespan(app: FastAPI):
     if keep_alive_task:
         keep_alive_task.cancel()
     inverter_task.cancel()
+    if history_seed_task:
+        history_seed_task.cancel()
+    await asyncio.gather(inverter_task, *([history_seed_task] if history_seed_task else []), return_exceptions=True)
     await inverter.stop()
     await session.shutdown()
+    await asyncio.to_thread(history.close)
 
 
 app = FastAPI(title="PV Solar API", lifespan=lifespan)

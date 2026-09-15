@@ -142,6 +142,28 @@ class TestMapping:
 # ---------------------------------------------------------------------------
 
 class TestReader:
+    async def test_history_receives_only_successful_complete_readings(self):
+        from unittest.mock import AsyncMock
+
+        sink = AsyncMock()
+        client = FakeClient()
+        reader, _, clock = make_reader(client, on_reading=sink)
+        await reader.step()
+        sink.assert_awaited_once_with(reader.dashboard())
+        client.fail_with = TimeoutError('offline')
+        clock.now += 3
+        await reader.step()
+        assert sink.await_count == 1
+
+    async def test_history_failure_does_not_break_live_reading_or_reconnect(self):
+        from unittest.mock import AsyncMock
+
+        reader, handed_out, _ = make_reader(FakeClient(), on_reading=AsyncMock(side_effect=OSError('disk full')))
+        await reader.step()
+        assert reader.dashboard()['battery_soc'] == 75
+        assert reader.status()['failed_rounds'] == 0
+        assert len(handed_out) == 1
+
     async def test_first_round_logs_in_once_and_reads_everything(self):
         client = FakeClient()
         reader, handed_out, clock = make_reader(client)

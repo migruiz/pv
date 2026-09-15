@@ -46,7 +46,7 @@ def _image(payload: bytes) -> Image.Image:
 
 
 @pytest.fixture()
-async def client(monkeypatch):
+async def client(monkeypatch, tmp_path):
     """Test app with only the Kindle router and a fake inverter reader."""
     monkeypatch.setenv("KINDLE_TOKEN", TOKEN)
     monkeypatch.setattr(kindle_module, "_last_good", None)
@@ -55,17 +55,22 @@ async def client(monkeypatch):
 
     app = FastAPI()
     app.state.inverter = inverter
+    from kindle_dashboard.history import HistoryStore
+    store = HistoryStore(tmp_path / 'history.sqlite3')
+    store.record(inverter.data)
+    app.state.history = store
     app.include_router(kindle_module.router)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac, inverter
+    store.close()
 
 
 @pytest.fixture()
 def render_calls(monkeypatch):
     calls = []
-    monkeypatch.setattr(kindle_module, "render_png", lambda *args: calls.append(args) or b"png")
+    monkeypatch.setattr(kindle_module, "render_png", lambda *args, **kwargs: calls.append(args) or b"png")
     return calls
 
 
@@ -140,6 +145,19 @@ class TestAuth:
 # ---------------------------------------------------------------------------
 
 class TestDashboardPng:
+    async def test_reads_chart_database_and_keeps_exact_timestamps(self, client, monkeypatch):
+        ac, _ = client
+        captured = {}
+
+        def render(*args, **kwargs):
+            captured.update(kwargs)
+            return b'png'
+
+        monkeypatch.setattr(kindle_module, 'render_png', render)
+        await ac.get('/dashboard.png', headers=HEADERS)
+        assert captured['history']['battery_soc'] == [73]
+        assert captured['history_positions'] == [1]
+
     async def test_returns_uncached_kindle_png(self, client):
         ac, _ = client
         resp = await ac.get("/dashboard.png", headers=HEADERS)
