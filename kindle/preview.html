@@ -19,9 +19,10 @@ const batteryState = ['charging', 'discharging', 'idle'].includes(requestedState
 const requestedGrid = new URLSearchParams(location.search).get('grid');
 const gridState = ['exporting', 'importing', 'idle'].includes(requestedGrid) ? requestedGrid : 'exporting';
 const capture = document.body.dataset.capture;
-document.title = capture ? 'Kindle · FusionSolar snapshot · ' + capture : 'Kindle · ' + batteryState + ' · Mock data';
-img.alt = capture ? 'FusionSolar readings captured at ' + capture : 'Mock solar dashboard: battery ' + batteryState;
-img.title = capture ? 'Captured readings: ' + capture + '. The chart now is the capture time.' : 'Mock solar dashboard';
+const live = document.body.dataset.live === 'true';
+document.title = live ? 'Kindle · Live Raspberry Pi' : capture ? 'Kindle · FusionSolar snapshot · ' + capture : 'Kindle · ' + batteryState + ' · Mock data';
+img.alt = live ? 'Live dashboard PNG served to the Kindle' : capture ? 'FusionSolar readings captured at ' + capture : 'Mock solar dashboard: battery ' + batteryState;
+img.title = live ? 'Live Raspberry Pi dashboard; refreshes every 2 seconds' : capture ? 'Captured readings: ' + capture + '. The chart now is the capture time.' : 'Mock solar dashboard';
 let busy = false, currentUrl = null, count = 0;
 async function refresh() {
   if (busy) return;

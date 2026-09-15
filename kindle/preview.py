@@ -6,12 +6,15 @@ Open http://127.0.0.1:8765 (460x345 display, 800x600 source PNG).
 
 import argparse
 import csv
+import json
 import math
 import sys
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
+from urllib.request import Request, urlopen
+from urllib.error import URLError
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -121,6 +124,7 @@ def load_capture(path):
 
 class Handler(BaseHTTPRequestHandler):
     capture = None
+    live_config = None
 
     def do_GET(self):
         request = urlsplit(self.path)
@@ -130,9 +134,22 @@ class Handler(BaseHTTPRequestHandler):
             if self.capture is not None:
                 stamp = self.capture[2].strftime("%d %b %Y %H:%M")
                 page = page.replace("<body>", f'<body data-capture="{stamp} Dublin">')
+            elif self.live_config is not None:
+                page = page.replace("<body>", '<body data-live="true">')
             data = page.encode("utf-8")
             content_type, status = "text/html; charset=utf-8", 200
         elif path == "/dashboard.png":
+            if self.live_config is not None:
+                try:
+                    upstream = Request(self.live_config['url'], headers={
+                        'Authorization': 'Bearer ' + self.live_config['token']})
+                    with urlopen(upstream, timeout=7) as response:
+                        data = response.read()
+                    content_type, status = "image/png", 200
+                except (URLError, TimeoutError):
+                    data, content_type, status = b"Pi dashboard temporarily unavailable", "text/plain", 502
+                self.send_payload(data, content_type, status)
+                return
             state = parse_qs(request.query).get("battery", ["discharging"])[0]
             if state not in ("charging", "discharging", "idle"):
                 state = "discharging"
@@ -150,6 +167,9 @@ class Handler(BaseHTTPRequestHandler):
             data, content_type, status = b"", "image/x-icon", 204
         else:
             data, content_type, status = b"Not found", "text/plain", 404
+        self.send_payload(data, content_type, status)
+
+    def send_payload(self, data, content_type, status):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
@@ -164,10 +184,15 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--history-csv", type=Path, help="Show real captured FusionSolar readings instead of mocks")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--history-csv", type=Path, help="Show real captured FusionSolar readings instead of mocks")
+    source.add_argument("--live-config", type=Path, help="Proxy the Pi PNG using a private Kindle URL/token config")
     args = parser.parse_args()
     if args.history_csv:
         Handler.capture = load_capture(args.history_csv)
+    if args.live_config:
+        Handler.live_config = json.loads(args.live_config.read_text())
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"{'Captured FusionSolar' if Handler.capture else 'Mock'} chart preview: http://127.0.0.1:{args.port}", flush=True)
+    mode = 'Live Raspberry Pi' if Handler.live_config else 'Captured FusionSolar' if Handler.capture else 'Mock'
+    print(f"{mode} chart preview: http://127.0.0.1:{args.port}", flush=True)
     server.serve_forever()

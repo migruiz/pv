@@ -67,6 +67,12 @@ are left blank. The browser title and image tooltip identify the snapshot time.
 The page still refreshes every two seconds, but a captured file is a fixed
 snapshot loaded at startup, with `now` meaning its latest reading time.
 
+For the exact live PNG served to the Kindle, use
+`--live-config kindle/solar-dashboard-config.json` from the repo root.
+The local server forwards authenticated requests to the configured Pi URL;
+the token stays on the server and is never included in the browser page.
+The browser title identifies live mode and refreshes every two seconds.
+
 All preview readings and history are mock data. All three charts share a
 12-hour horizontal axis: **now minus 12 hours at the left, now at the right**,
 using 145 samples spaced five minutes apart. The production chart has guides at
