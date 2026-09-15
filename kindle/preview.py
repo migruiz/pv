@@ -1,13 +1,14 @@
-"""Local layout preview with mock readings/history; no inverter or API connection.
+"""Local preview with mock data or a captured FusionSolar history CSV.
 
 Run from the repo root: api/.venv/Scripts/python.exe kindle/preview.py
 Open http://127.0.0.1:8765 (460x345 display, 800x600 source PNG).
 """
 
 import argparse
+import csv
 import math
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -79,12 +80,57 @@ def battery_preview(state, grid_state="exporting"):
     return readings, history
 
 
+def load_capture(path):
+    """Place captured five-minute readings on a real twelve-hour time axis.
+
+    The snapshot's 'now' is its latest reading. Missing slots stay blank.
+    All displayed readings and state icons come from the captured data.
+    """
+    with Path(path).open(newline="", encoding="utf-8") as stream:
+        rows = {datetime.fromisoformat(row['timestamp_utc']).astimezone(timezone.utc): row
+                for row in csv.DictReader(stream)}
+    if not rows:
+        raise ValueError("History CSV has no readings")
+    latest = max(rows)
+    slots = [latest + timedelta(minutes=offset) for offset in HISTORY_OFFSETS_MINUTES]
+
+    def number(row, key):
+        raw = row.get(key)
+        if raw in (None, ""):
+            return None
+        result = float(raw)
+        if not math.isfinite(result) or abs(result) > 1e100:
+            return None
+        return result
+
+    history = {key: [number(rows.get(stamp, {}), key) for stamp in slots]
+               for key in ("pv_kw", "home_kw", "battery_soc")}
+    current = rows[latest]
+    readings = {key: samples[-1] for key, samples in history.items()}
+    if any(v is None for v in readings.values()):
+        raise ValueError("Latest captured row must contain solar, home and battery readings")
+    battery_kw = number(current, "battery_signed_kw")
+    if battery_kw is not None:
+        readings.update(battery_charge_discharge_kw=abs(battery_kw), battery_charging=battery_kw > 0)
+    inverter_kw = number(current, "inverter_ac_kw")
+    if inverter_kw is not None:
+        export_kw = inverter_kw - readings["home_kw"]
+        readings.update(grid_kw=abs(export_kw), grid_importing=export_kw < 0)
+    return readings, history, latest.astimezone(ZoneInfo("Europe/Dublin"))
+
+
 class Handler(BaseHTTPRequestHandler):
+    capture = None
+
     def do_GET(self):
         request = urlsplit(self.path)
         path = request.path
         if path == "/":
-            data = Path(__file__).with_suffix(".html").read_bytes()
+            page = Path(__file__).with_suffix(".html").read_text(encoding="utf-8")
+            if self.capture is not None:
+                stamp = self.capture[2].strftime("%d %b %Y %H:%M")
+                page = page.replace("<body>", f'<body data-capture="{stamp} Dublin">')
+            data = page.encode("utf-8")
             content_type, status = "text/html; charset=utf-8", 200
         elif path == "/dashboard.png":
             state = parse_qs(request.query).get("battery", ["discharging"])[0]
@@ -93,8 +139,12 @@ class Handler(BaseHTTPRequestHandler):
             grid_state = parse_qs(request.query).get("grid", ["exporting"])[0]
             if grid_state not in ("exporting", "importing", "idle"):
                 grid_state = "exporting"
-            readings, history = battery_preview(state, grid_state)
-            data = render_png(readings, datetime.now(ZoneInfo("Europe/Dublin")), history=history)
+            if self.capture is not None:
+                readings, history, at = self.capture
+            else:
+                readings, history = battery_preview(state, grid_state)
+                at = datetime.now(ZoneInfo("Europe/Dublin"))
+            data = render_png(readings, at, history=history)
             content_type, status = "image/png", 200
         elif path == "/favicon.ico":
             data, content_type, status = b"", "image/x-icon", 204
@@ -114,7 +164,10 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--history-csv", type=Path, help="Show real captured FusionSolar readings instead of mocks")
     args = parser.parse_args()
+    if args.history_csv:
+        Handler.capture = load_capture(args.history_csv)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"Mock chart preview: http://127.0.0.1:{args.port}", flush=True)
+    print(f"{'Captured FusionSolar' if Handler.capture else 'Mock'} chart preview: http://127.0.0.1:{args.port}", flush=True)
     server.serve_forever()

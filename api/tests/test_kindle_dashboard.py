@@ -5,7 +5,7 @@ import io
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from PIL import Image
+from PIL import Image, ImageDraw
 
 import kindle_dashboard.router as kindle_module
 import mock_clock
@@ -91,6 +91,22 @@ class TestRenderer:
     def test_missing_or_bad_values_render_as_zero(self):
         image = renderer.render({"battery_soc": "n/a"}, mock_clock.get_now())
         assert image.size == (800, 600)
+
+    def test_missing_history_does_not_connect_across_gap(self):
+        image = Image.new("1", (100, 20), 0)
+        renderer.draw_trace_segments(ImageDraw.Draw(image),
+                                     [(0, 10), (20, 10), None, (80, 10), (99, 10)], fill=1)
+        assert image.getpixel((10, 10)) == 1
+        assert image.getpixel((50, 10)) == 0
+        assert image.getpixel((90, 10)) == 1
+
+    def test_captured_chart_layout_accepts_missing_slots(self):
+        history = {"pv_kw": [None, 0, 6, None, 2.517],
+                   "home_kw": [None, 0.2, None, 4, 0.279],
+                   "battery_soc": [None, 20, None, 90, 73]}
+        image = renderer.render(SAMPLE, mock_clock.get_now(), history=history)
+        assert image.size == (800, 600)
+        assert image.mode == "1"
 
 
 # ---------------------------------------------------------------------------

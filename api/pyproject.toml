@@ -12,6 +12,7 @@ dependencies = [
     "firebase-admin>=6.5",
     "pillow>=12.3.0",
     "huawei-solar>=2.5.0",
+    "astral>=3.2,<4",
 ]
 
 [project.optional-dependencies]

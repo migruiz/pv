@@ -8,9 +8,11 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from discharge.power_calculator import remaining_energy_kwh
+from kindle_dashboard.estimate import clock_text, estimate_battery
 
 WIDTH, HEIGHT = 800, 600
 HISTORY_HOURS = 12
+FLOW_ICON_MIN_KW = 0.1
 FONT_DIR = Path(__file__).parent / "fonts"
 
 
@@ -85,7 +87,7 @@ def draw_bolt(draw, center):
     draw.polygon(points, fill="black")
 
 
-def draw_battery(draw, box, soc, history: Sequence[float] = ()):
+def draw_battery(draw, box, soc, history: Sequence[float | None] = ()):
     x1, y1, x2, y2 = box
     draw.rounded_rectangle(box, radius=13, outline="black", width=7)
     terminal_width = 18
@@ -102,6 +104,7 @@ def draw_battery(draw, box, soc, history: Sequence[float] = ()):
         # Anchor the latest sample to the displayed SOC at the positive end.
         samples = [*history[:-1], soc]
         points = [
+            None if sample is None else
             (round(i / (len(samples) - 1) * (inner_right - inner_left)),
              round((1 - max(0, min(100, sample)) / 100) * (inner_bottom - inner_top)))
             for i, sample in enumerate(samples)
@@ -109,12 +112,24 @@ def draw_battery(draw, box, soc, history: Sequence[float] = ()):
         draw_battery_trace(draw, (inner_left, inner_top, inner_right, inner_bottom), fill_width, points)
 
 
+def draw_trace_segments(draw, points, **kwargs):
+    """Leave missing intervals blank instead of connecting across a data gap."""
+    segment = []
+    for point in [*points, None]:
+        if point is not None:
+            segment.append(point)
+        else:
+            if len(segment) > 1:
+                draw.line(segment, **kwargs)
+            segment = []
+
+
 def draw_battery_trace(draw, box, fill_width, points):
     """Clip the trace to the battery interior and invert it over the charge fill."""
     left, top, right, bottom = box
     width, height = right - left + 1, bottom - top + 1
     trace = Image.new("1", (width, height), 0)
-    ImageDraw.Draw(trace).line(points, fill=1, width=3, joint="curve")
+    draw_trace_segments(ImageDraw.Draw(trace), points, fill=1, width=3, joint="curve")
     # The fill rectangle includes its right edge. At 0% there is no fill.
     split = min(width, fill_width + 1) if fill_width > 0 else 0
     if split:
@@ -144,6 +159,20 @@ def draw_empty_battery(draw, box):
                            fill="white", outline="black", width=3)
 
 
+def draw_sunset_time(draw, center_x, center_y, setting):
+    """Small setting sun and today's local sunset time, centered as a group."""
+    number, suffix = clock_text(setting)
+    label, face = f"{number}{suffix}", font(20)
+    left, top, right, bottom = draw.textbbox((0, 0), label, font=face)
+    group_left = round(center_x - (36 + 10 + right - left) / 2)
+    cx, horizon = group_left + 18, center_y + 8
+    draw.arc((cx - 11, horizon - 11, cx + 11, horizon + 11),
+             180, 360, fill="black", width=2)
+    draw.line((cx - 18, horizon, cx + 18, horizon), fill="black", width=2)
+    draw.text((group_left + 46 - left, center_y - (bottom - top) / 2 - top),
+              label, font=face, fill="black")
+
+
 def draw_grid_export(draw, center_x, top, export_kw):
     """A compact electricity pylon with the current export power below it."""
     cx, bottom = center_x, top + 52
@@ -171,7 +200,7 @@ def draw_grid_export(draw, center_x, top, export_kw):
     centered(draw, (cx, bottom + 27), f"{export_kw:.1f}k", font(20))
 
 
-def draw_power_history(draw, box, samples: Sequence[float], *, scale_max=5.5, guide_kw=3):
+def draw_power_history(draw, box, samples: Sequence[float | None], *, scale_max=5.5, guide_kw=3):
     """Draw twelve hours of power strictly within the plot's bounds."""
     left, top, right, bottom = box
     for level in (0, guide_kw, scale_max):
@@ -184,11 +213,12 @@ def draw_power_history(draw, box, samples: Sequence[float], *, scale_max=5.5, gu
         # values so over-range intervals disappear instead of flattening at max.
         trace = Image.new("1", (right - left + 1, bottom - top + 1), 0)
         points = [
+            None if sample is None else
             (round(i * (right - left) / (len(samples) - 1)),
              round((1 - max(0, sample) / scale_max) * (bottom - top)))
             for i, sample in enumerate(samples)
         ]
-        ImageDraw.Draw(trace).line(points, fill=1, width=3, joint="curve")
+        draw_trace_segments(ImageDraw.Draw(trace), points, fill=1, width=3, joint="curve")
         draw.bitmap((left, top), trace, fill="black")
     # Place scale labels inside the plot, just below their dotted guide.
     label_font = font(17)
@@ -213,10 +243,10 @@ def draw_history_hours(draw, left, right, baseline, updated_at):
 
 
 def render(data: dict, updated_at: datetime, stale: bool = False, *,
-           history: dict[str, Sequence[float]] | None = None) -> Image.Image:
+           history: dict[str, Sequence[float | None]] | None = None) -> Image.Image:
     """Draw the dashboard; every history spans now − HISTORY_HOURS through now.
 
-    Samples must be evenly spaced and ordered oldest to newest. `updated_at`
+    Samples must be evenly spaced and ordered oldest to newest; None is a gap. `updated_at`
     is shown as-is in the legacy layout, so pass a Dublin-local time.
     """
     image = Image.new("1", (WIDTH, HEIGHT), 1)
@@ -248,10 +278,12 @@ def render(data: dict, updated_at: datetime, stale: bool = False, *,
                 production_top = number_top
 
     # Left: align the visible battery digits with production, and the bottom
-    # of the placeholder time with the consumption chart's horizontal axis.
+    # of the estimated empty time with the consumption chart's horizontal axis.
+    estimate = estimate_battery(data.get("battery_soc"), updated_at)
+    time_text, time_suffix = clock_text(estimate.empty_at) if estimate.empty_at else ("--:--", "")
     soc = max(0.0, min(100.0, value(data, "battery_soc")))
     soc_text, soc_font = f"{soc:.0f}", font(184, True)
-    exporting = data.get("grid_importing") is False and value(data, "grid_kw") > 0
+    exporting = data.get("grid_importing") is False and value(data, "grid_kw") >= FLOW_ICON_MIN_KW
     if chart_layout and exporting:
         # Reserve the pylon's space even when SOC has three digits.
         size = 184
@@ -288,15 +320,17 @@ def render(data: dict, updated_at: datetime, stale: bool = False, *,
     draw_battery(draw, battery_box, soc, history.get("battery_soc", ()) if chart_layout else ())
     if chart_layout:
         charging = data.get("battery_charging")
-        if value(data, "battery_charge_discharge_kw") > 0 and isinstance(charging, bool):
+        if value(data, "battery_charge_discharge_kw") >= FLOW_ICON_MIN_KW and isinstance(charging, bool):
             draw_battery_badge(draw, battery_box, charging)
         draw_history_hours(draw, battery_box[0] + 12, battery_box[2] - 12, battery_box[3], updated_at)
-    reading_with_symbols(draw, (250, time_baseline), "11:40", time_font,
-                         before=None if chart_layout else ("↓", font(38)), after=("p", font(38)))
+    reading_with_symbols(draw, (250, time_baseline), time_text, time_font,
+                         before=None if chart_layout else ("↓", font(38)), after=(time_suffix, font(38)))
     if chart_layout:
-        text_left, _, text_right, _ = draw.textbbox((0, 0), "11:40", font=time_font)
+        text_left, _, text_right, _ = draw.textbbox((0, 0), time_text, font=time_font)
         icon_left = round(250 - (text_right - text_left) / 2 - 8 - 22)
         draw_empty_battery(draw, (icon_left, time_baseline - 38, icon_left + 22, time_baseline - 1))
+
+    draw_sunset_time(draw, 250, time_baseline + 19, estimate.sunset)
 
     if not chart_layout:
         centered(draw, (WIDTH / 2, 568), updated_at.strftime("Updated %H:%M:%S"), font(17))
@@ -308,7 +342,7 @@ def render(data: dict, updated_at: datetime, stale: bool = False, *,
 
 
 def render_png(data: dict, updated_at: datetime, stale: bool = False, *,
-               history: dict[str, Sequence[float]] | None = None) -> bytes:
+               history: dict[str, Sequence[float | None]] | None = None) -> bytes:
     output = io.BytesIO()
     render(data, updated_at, stale, history=history).save(output, format="PNG", optimize=True)
     return output.getvalue()

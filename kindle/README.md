@@ -58,6 +58,15 @@ From `api/`, run `uv run python ../kindle/preview.py`, then open
 460x345 browser pixels and refreshes every 2 seconds.
 Use `--port 8766` to run a separate preview when the default port is occupied.
 
+To view captured real readings, add `--history-csv <path>` pointing to a normalized
+FusionSolar CSV with `timestamp_utc`, `pv_kw`, `home_kw`, `battery_soc`,
+`battery_signed_kw` (positive charging), and `inverter_ac_kw` columns.
+This mode replaces all mock readings and state icons. It uses a five-minute
+grid covering twelve hours ending at the latest captured reading; missing slots
+are left blank. The browser title and image tooltip identify the snapshot time.
+The page still refreshes every two seconds, but a captured file is a fixed
+snapshot loaded at startup, with `now` meaning its latest reading time.
+
 All preview readings and history are mock data. All three charts share a
 12-hour horizontal axis: **now minus 12 hours at the left, now at the right**,
 using 145 samples spaced five minutes apart. The production chart has guides at
@@ -72,19 +81,71 @@ and labels the right endpoint `now`.
 Inside the battery, 0–100% runs bottom to top;
 the latest point ends at the positive terminal side at the displayed percentage.
 The trace is white over the black charge fill and black over the unfilled area.
-Charging adds a borderless lightning bolt above the battery terminal; discharging
-adds a downward arrow below it. Idle shows neither. Compare the mock states
+Charging at 0.1 kW or more adds a borderless lightning bolt above the battery
+terminal; discharging at 0.1 kW or more adds a downward arrow below it.
+Below 0.1 kW, neither battery icon is shown. Compare the mock states
 at `http://127.0.0.1:8765/?battery=charging`, `?battery=discharging` (default),
 or `?battery=idle`.
-The placeholder empty time has a small upright empty-battery icon before it.
+The estimated empty time has a small upright empty-battery icon before it.
 A remaining-energy value (compact `3.5k` format) is left-aligned above the percent
 symbol, using SOC times the configured 4.8 kWh usable capacity; the percentage
 position stays fixed.
 A grid pylon and export power appear to the left of the percentage only when
-`grid_importing` is false and `grid_kw` is positive. The preview defaults to a
+`grid_importing` is false and `grid_kw` is at least 0.1 kW. The preview defaults to a
 mock 3.2 kW export; use `&grid=importing` or `&grid=idle` to hide the indicator.
 The renderer's optional `history` argument enables this layout; the production
 endpoint retains its existing layout until real history is implemented.
+
+### Simple sunset battery estimate
+
+Both renderer layouts calculate the empty time from current SOC using
+`SOC / 100 × 4.8 kWh / 0.25 kW`. During daylight, this runtime starts at
+today's sunset; at night (including after midnight before sunrise), it starts
+at the reading time. Zero charge means already empty; unavailable SOC shows
+`--:--`. A small sunset icon and today's sunset time appear below the estimate.
+
+Astral calculates sunrise/sunset locally for Dublin (53.3498, -6.2603), with
+the Europe/Dublin timezone and daylight-saving changes. No web API or network
+request is required. The estimate uses full-precision energy; the displayed
+energy and clock are rounded. Elapsed runtime is calculated in UTC across
+clock changes. When readings are stale, the estimate stays tied to those
+readings and the existing STALE DATA banner remains visible.
+
+This deliberately simple baseline scenario assumes solar covers the house
+until sunset, then a constant 0.25 kW battery load until 0% SOC. It does not
+forecast later solar/cheap-rate charging, scheduled export, extra appliance
+loads, a reserve or conversion losses. The preview still uses mock SOC/history;
+its sunset is real for the current date and its empty time is calculated.
+
+### FusionSolar history verification (15 September 2026)
+
+Read-only cloud requests using the existing saved session returned all three
+series in five-minute samples. For the requested 00:41–12:41 Dublin window,
+143 aligned samples were available from 00:45 through 12:35, without internal
+gaps; the newest few minutes had not reached the cloud yet.
+
+- PV: `/rest/pvms/web/device/v1/device-history-data`, inverter DN,
+  signal `30017` (DC input kW, matching the local reader's `pv_kw`).
+- Battery SOC: the same endpoint, battery DN, signal `30007` (%).
+  Signal `30005` also supplies signed battery kW, positive when charging.
+- Home: `/rest/pvms/web/station/v1/overview/energy-balance`, `usePower` (kW).
+  The plant `soc` array was empty, so battery device history is required.
+
+Device responses use `data[signal].pmDataList`, with Unix-second `startTime`
+and `counterValue`. The request's `date` is milliseconds: use local noon on
+the requested day, then validate returned dates. Dublin midnight during summer
+selected the previous day in the device endpoint. Plant requests use `timeDim=2`,
+local-midnight `queryTime` in milliseconds, `timeZoneStr=Europe/Dublin` and the
+date's UTC offset in hours as `timeZone`. Its `xAxis` contains Dublin-local
+date/time strings aligned with the value arrays. Across midnight, fetch both
+days and filter the merged result by actual timestamps, in UTC.
+
+Device history uses `1.7976931348623157e+308` for unavailable/future samples;
+plant history uses `--`. Preserve those as missing, never zero. The plant's
+`productPower` differed slightly from device DC power, so use device `30017`
+for consistency with current solar readings. Plant `chargeAndDisChargePower`
+uses the opposite sign to device `30005`. Backfill and ongoing database
+ingestion are not yet connected to the API or preview.
 
 ## Tests
 
