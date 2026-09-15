@@ -56,6 +56,7 @@ The Kindle uses the LAN address `http://192.168.0.11:8100/dashboard.png`, not `p
 From `api/`, run `uv run python ../kindle/preview.py`, then open
 `http://127.0.0.1:8765/`. This preview renders an 800x600 monochrome PNG at
 460x345 browser pixels and refreshes every 2 seconds.
+Use `--port 8766` to run a separate preview when the default port is occupied.
 
 All preview readings and history are mock data. All three charts share a
 12-hour horizontal axis: **now minus 12 hours at the left, now at the right**,
@@ -71,6 +72,14 @@ and labels the right endpoint `now`.
 Inside the battery, 0–100% runs bottom to top;
 the latest point ends at the positive terminal side at the displayed percentage.
 The trace is white over the black charge fill and black over the unfilled area.
+Charging adds a borderless lightning bolt above the battery terminal; discharging
+adds a downward arrow below it. Idle shows neither. Compare the mock states
+at `http://127.0.0.1:8765/?battery=charging`, `?battery=discharging` (default),
+or `?battery=idle`.
+The placeholder empty time has a small upright empty-battery icon before it.
+A remaining-energy value (compact `3.5k` format) is left-aligned above the percent
+symbol, using SOC times the configured 4.8 kWh usable capacity; the percentage
+position stays fixed.
 The renderer's optional `history` argument enables this layout; the production
 endpoint retains its existing layout until real history is implemented.
 

@@ -4,11 +4,13 @@ Run from the repo root: api/.venv/Scripts/python.exe kindle/preview.py
 Open http://127.0.0.1:8765 (460x345 display, 800x600 source PNG).
 """
 
+import argparse
 import math
 import sys
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,14 +66,30 @@ HISTORY = mock_history()
 READINGS = {key: samples[-1] for key, samples in HISTORY.items()}
 
 
+def battery_preview(state):
+    """Keep the recent mock history consistent with the selected badge."""
+    readings = {**READINGS, "battery_charging": state == "charging",
+                "battery_charge_discharge_kw": 0 if state == "idle" else 0.9}
+    history = {**HISTORY, "battery_soc": list(HISTORY["battery_soc"])}
+    if state in ("charging", "idle"):
+        soc = readings["battery_soc"]
+        history["battery_soc"][-13:] = [soc - 18 + i * 1.5 for i in range(13)] if state == "charging" else [soc] * 13
+    return readings, history
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        path = self.path.split("?", 1)[0]
+        request = urlsplit(self.path)
+        path = request.path
         if path == "/":
             data = Path(__file__).with_suffix(".html").read_bytes()
             content_type, status = "text/html; charset=utf-8", 200
         elif path == "/dashboard.png":
-            data = render_png(READINGS, datetime.now(ZoneInfo("Europe/Dublin")), history=HISTORY)
+            state = parse_qs(request.query).get("battery", ["discharging"])[0]
+            if state not in ("charging", "discharging", "idle"):
+                state = "discharging"
+            readings, history = battery_preview(state)
+            data = render_png(readings, datetime.now(ZoneInfo("Europe/Dublin")), history=history)
             content_type, status = "image/png", 200
         elif path == "/favicon.ico":
             data, content_type, status = b"", "image/x-icon", 204
@@ -89,6 +107,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    server = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
-    print("Mock chart preview: http://127.0.0.1:8765", flush=True)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--port", type=int, default=8765)
+    args = parser.parse_args()
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    print(f"Mock chart preview: http://127.0.0.1:{args.port}", flush=True)
     server.serve_forever()

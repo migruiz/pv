@@ -7,6 +7,8 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+from discharge.power_calculator import remaining_energy_kwh
+
 WIDTH, HEIGHT = 800, 600
 HISTORY_HOURS = 12
 FONT_DIR = Path(__file__).parent / "fonts"
@@ -121,6 +123,27 @@ def draw_battery_trace(draw, box, fill_width, points):
         draw.bitmap((left + split, top), trace.crop((split, 0, width, height)), fill="black")
 
 
+def draw_battery_badge(draw, box, charging: bool):
+    """Borderless state icons above or below the terminal, outside the battery."""
+    _, top, right, bottom = box
+    cx, cy = right + 32, top + 18 if charging else bottom - 18
+    if charging:
+        shape = [(8, -24), (-19, 5), (-4, 5), (-9, 24),
+                 (20, -9), (4, -9)]
+    else:
+        shape = [(0, 22), (-18, 2), (-7, 2), (-7, -22),
+                 (7, -22), (7, 2), (18, 2)]
+    draw.polygon([(cx + round(x * 0.75), cy + round(y * 0.75)) for x, y in shape], fill="black")
+
+
+def draw_empty_battery(draw, box):
+    """Small upright, unfilled battery with the positive terminal on top."""
+    left, top, right, bottom = box
+    draw.rectangle((left + 7, top, right - 7, top + 4), fill="black")
+    draw.rounded_rectangle((left, top + 6, right, bottom), radius=3,
+                           fill="white", outline="black", width=3)
+
+
 def draw_power_history(draw, box, samples: Sequence[float], *, scale_max=5.5, guide_kw=3):
     """Draw twelve hours of power strictly within the plot's bounds."""
     left, top, right, bottom = box
@@ -208,6 +231,16 @@ def render(data: dict, updated_at: datetime, stale: bool = False, *,
         time_baseline = chart_bottom + 1  # Text bounds exclude the last row.
     reading_with_symbols(draw, (250, soc_baseline), soc_text,
                          soc_font, after=("%", font(43)))
+    if chart_layout:
+        # Keep the percentage untouched; align the energy label with its left edge.
+        number_left, _, number_right, _ = draw.textbbox((0, 0), soc_text, font=soc_font)
+        pl, pt, pr, pb = draw.textbbox((0, 0), "%", font=font(43))
+        percent_left = 250 + (number_right - number_left) / 2 + 8
+        energy_y = (production_top + soc_baseline - (pb - pt)) / 2
+        energy_text, energy_font = f"{remaining_energy_kwh(soc, 0):.1f}k", font(28)
+        el, et, er, eb = draw.textbbox((0, 0), energy_text, font=energy_font)
+        draw.text((percent_left - el, energy_y - (eb - et) / 2 - et),
+                  energy_text, font=energy_font, fill="black")
     time_font = font(112, True)
     battery_box = (44, 253, 431, 351)
     if chart_layout:
@@ -218,9 +251,16 @@ def render(data: dict, updated_at: datetime, stale: bool = False, *,
                        round(time_baseline - (time_bottom - time_top) - margin))
     draw_battery(draw, battery_box, soc, history.get("battery_soc", ()) if chart_layout else ())
     if chart_layout:
+        charging = data.get("battery_charging")
+        if value(data, "battery_charge_discharge_kw") > 0 and isinstance(charging, bool):
+            draw_battery_badge(draw, battery_box, charging)
         draw_history_hours(draw, battery_box[0] + 12, battery_box[2] - 12, battery_box[3], updated_at)
     reading_with_symbols(draw, (250, time_baseline), "11:40", time_font,
-                         before=("↓", font(38)), after=("p", font(38)))
+                         before=None if chart_layout else ("↓", font(38)), after=("p", font(38)))
+    if chart_layout:
+        text_left, _, text_right, _ = draw.textbbox((0, 0), "11:40", font=time_font)
+        icon_left = round(250 - (text_right - text_left) / 2 - 8 - 22)
+        draw_empty_battery(draw, (icon_left, time_baseline - 38, icon_left + 22, time_baseline - 1))
 
     if not chart_layout:
         centered(draw, (WIDTH / 2, 568), updated_at.strftime("Updated %H:%M:%S"), font(17))
