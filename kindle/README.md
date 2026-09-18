@@ -73,6 +73,26 @@ The local server forwards authenticated requests to the configured Pi URL;
 the token stays on the server and is never included in the browser page.
 The browser title identifies live mode and refreshes every two seconds.
 
+To try both charts as **running daily energy totals** with real readings,
+copy `history.sqlite3` and `history.sqlite3-wal` from the Pi's data volume
+(`/var/lib/docker/volumes/pv_pv-data/_data/`, needs `sudo`), set `PV_API_KEY`, and run
+`--live-energy <copied history.sqlite3>` (optionally `--api-url`, default
+`https://pv.tenjo.ovh/`). The server polls the API's `/dashboard` every 3 seconds and
+keeps extending the copy, so all charts move live; this test mode is not on the Kindle.
+Each chart shows kWh since Dublin midnight, restarting at midnight, on a scale that rounds
+up to the next 10 kWh, and labels the current total at its right end (above the line, or
+below it when the line is too close to the top). The big numbers above the charts are
+still live power.
+
+- **Solar** adds up the stored solar power and scales today's line to end at today's
+  production from the inverter's counters: its daily yield minus the battery's daily
+  discharge, because the daily yield also counts battery discharge (it keeps rising after
+  sunset while the battery runs the house). At 20:49 on 15 September 2026 that was
+  25.18 − 2.70 = 22.48 kWh, against 22.46 kWh produced in the FusionSolar app.
+- **Home** adds up the stored home power as it is, because the inverter has no daily
+  consumption counter. The cloud seed began at 01:05 on 15 September 2026, so that day's
+  home total misses its first hour; it still came close to the app's 12.63 kWh.
+
 All preview readings and history are mock data. All three charts share a
 12-hour horizontal axis: **now minus 12 hours at the left, now at the right**,
 using 145 samples spaced five minutes apart. The production chart has guides at

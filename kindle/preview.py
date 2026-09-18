@@ -1,4 +1,4 @@
-"""Local preview with mock data or a captured FusionSolar history CSV.
+"""Local preview with mock data, a captured FusionSolar CSV, or live Pi readings.
 
 Run from the repo root: api/.venv/Scripts/python.exe kindle/preview.py
 Open http://127.0.0.1:8765 (460x345 display, 800x600 source PNG).
@@ -8,7 +8,10 @@ import argparse
 import csv
 import json
 import math
+import os
 import sys
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -20,12 +23,17 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "api"))
 
+from kindle_dashboard.daily_energy import energy_history, solar_today_kwh
+from kindle_dashboard.history import HistoryStore
 from kindle_dashboard.renderer import HISTORY_HOURS, render_png
 
 
 SAMPLE_MINUTES = 5
 # All three mock traces share the exact same endpoints and sample times.
 HISTORY_OFFSETS_MINUTES = tuple(range(-HISTORY_HOURS * 60, 1, SAMPLE_MINUTES))
+DUBLIN = ZoneInfo("Europe/Dublin")
+LIVE_POLL_SECONDS = 3
+STALE_SECONDS = 30
 
 
 def mock_history():
@@ -119,12 +127,53 @@ def load_capture(path):
     if inverter_kw is not None:
         export_kw = inverter_kw - readings["home_kw"]
         readings.update(grid_kw=abs(export_kw), grid_importing=export_kw < 0)
-    return readings, history, latest.astimezone(ZoneInfo("Europe/Dublin"))
+    return readings, history, latest.astimezone(DUBLIN)
+
+
+class LivePi:
+    """Poll the Pi's /dashboard and keep extending a local copy of its history."""
+
+    def __init__(self, db_path, api_url, api_key):
+        self.store = HistoryStore(db_path)
+        self.request = Request(api_url.rstrip("/") + "/dashboard",
+                               headers={"X-API-Key": api_key, "User-Agent": "pv-kindle-preview"})
+        self.latest = None
+        threading.Thread(target=self.poll, daemon=True).start()
+
+    def poll(self):
+        failures = 0
+        while True:
+            try:
+                with urlopen(self.request, timeout=7) as response:
+                    data = json.load(response)
+                self.store.record(data)
+                self.latest = data
+            except (URLError, TimeoutError, ValueError, KeyError) as exc:
+                failures += 1
+                if failures == 1 or failures % 100 == 0:
+                    print(f"Pi readings unavailable ({failures} failures): {exc}", flush=True)
+            time.sleep(LIVE_POLL_SECONDS)
+
+    def render(self):
+        """Both charts as running daily totals, from live readings.
+
+        Solar ends at today's production from the inverter's counters; home has
+        no counter to match.
+        """
+        data = self.latest
+        at = datetime.fromisoformat(data["updated_at"]).astimezone(DUBLIN)
+        stale = (datetime.now(timezone.utc) - at).total_seconds() > STALE_SECONDS
+        history, positions = self.store.chart(at, data)
+        history["pv_kwh"] = energy_history(self.store, at, data, history, positions, "pv_kw",
+                                           today_kwh=solar_today_kwh(data))
+        history["home_kwh"] = energy_history(self.store, at, data, history, positions, "home_kw")
+        return render_png(data, at, stale, history=history, history_positions=positions, charts="energy")
 
 
 class Handler(BaseHTTPRequestHandler):
     capture = None
     live_config = None
+    live_energy = None
 
     def do_GET(self):
         request = urlsplit(self.path)
@@ -136,6 +185,8 @@ class Handler(BaseHTTPRequestHandler):
                 page = page.replace("<body>", f'<body data-capture="{stamp} Dublin">')
             elif self.live_config is not None:
                 page = page.replace("<body>", '<body data-live="true">')
+            elif self.live_energy is not None:
+                page = page.replace("<body>", '<body data-live="daily-energy">')
             data = page.encode("utf-8")
             content_type, status = "text/html; charset=utf-8", 200
         elif path == "/dashboard.png":
@@ -150,6 +201,12 @@ class Handler(BaseHTTPRequestHandler):
                     data, content_type, status = b"Pi dashboard temporarily unavailable", "text/plain", 502
                 self.send_payload(data, content_type, status)
                 return
+            if self.live_energy is not None:
+                if self.live_energy.latest is None:
+                    self.send_payload(b"Waiting for the first Pi reading", "text/plain", 503)
+                else:
+                    self.send_payload(self.live_energy.render(), "image/png", 200)
+                return
             state = parse_qs(request.query).get("battery", ["discharging"])[0]
             if state not in ("charging", "discharging", "idle"):
                 state = "discharging"
@@ -160,7 +217,7 @@ class Handler(BaseHTTPRequestHandler):
                 readings, history, at = self.capture
             else:
                 readings, history = battery_preview(state, grid_state)
-                at = datetime.now(ZoneInfo("Europe/Dublin"))
+                at = datetime.now(DUBLIN)
             data = render_png(readings, at, history=history)
             content_type, status = "image/png", 200
         elif path == "/favicon.ico":
@@ -187,12 +244,21 @@ if __name__ == "__main__":
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--history-csv", type=Path, help="Show real captured FusionSolar readings instead of mocks")
     source.add_argument("--live-config", type=Path, help="Proxy the Pi PNG using a private Kindle URL/token config")
+    source.add_argument("--live-energy", type=Path, metavar="HISTORY_DB",
+                        help="Draw both charts as running daily totals from live Pi readings, extending this copy "
+                             "of the Pi's history database (API key in PV_API_KEY)")
+    parser.add_argument("--api-url", default="https://pv.tenjo.ovh/", help="API polled by --live-energy")
     args = parser.parse_args()
     if args.history_csv:
         Handler.capture = load_capture(args.history_csv)
     if args.live_config:
         Handler.live_config = json.loads(args.live_config.read_text())
+    if args.live_energy:
+        if not os.environ.get("PV_API_KEY"):
+            parser.error("--live-energy needs the API key in the PV_API_KEY environment variable")
+        Handler.live_energy = LivePi(args.live_energy, args.api_url, os.environ["PV_API_KEY"])
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    mode = 'Live Raspberry Pi' if Handler.live_config else 'Captured FusionSolar' if Handler.capture else 'Mock'
+    mode = ('Live Raspberry Pi' if Handler.live_config else 'Live Pi daily energy totals' if Handler.live_energy
+            else 'Captured FusionSolar' if Handler.capture else 'Mock')
     print(f"{mode} chart preview: http://127.0.0.1:{args.port}", flush=True)
     server.serve_forever()

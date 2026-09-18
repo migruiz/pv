@@ -1,6 +1,7 @@
 """Pure drawing code for the 800x600 1-bit Kindle solar dashboard."""
 
 import io
+import math
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -13,6 +14,8 @@ from kindle_dashboard.estimate import clock_text, estimate_battery
 WIDTH, HEIGHT = 800, 600
 HISTORY_HOURS = 12
 FLOW_ICON_MIN_KW = 0.1
+# Running daily kWh history drawn instead of each power reading when charts="energy"
+ENERGY_KEYS = {"pv_kw": "pv_kwh", "home_kw": "home_kwh"}
 FONT_DIR = Path(__file__).parent / "fonts"
 
 
@@ -200,8 +203,15 @@ def draw_grid_export(draw, center_x, top, export_kw):
     centered(draw, (cx, bottom + 27), f"{export_kw:.1f}k", font(20))
 
 
-def draw_power_history(draw, box, samples: Sequence[float | None], *, scale_max=5.5, guide_kw=3, positions=None):
-    """Draw twelve hours of power strictly within the plot's bounds."""
+def energy_scale(samples: Sequence[float | None]) -> int:
+    """Chart top for running kWh totals: the next multiple of 10, at least 10."""
+    highest = max((sample for sample in samples if sample is not None), default=0)
+    return max(10, math.ceil(highest / 10) * 10)
+
+
+def draw_power_history(draw, box, samples: Sequence[float | None], *, scale_max=5.5, guide_kw=3, positions=None,
+                       unit="", show_latest=False):
+    """Draw twelve hours of power (or energy) strictly within the plot's bounds."""
     left, top, right, bottom = box
     for level in (0, guide_kw, scale_max):
         y = round(bottom - level / scale_max * (bottom - top))
@@ -223,11 +233,31 @@ def draw_power_history(draw, box, samples: Sequence[float | None], *, scale_max=
     # Place scale labels inside the plot, just below their dotted guide.
     label_font = font(17)
     for level in (scale_max, guide_kw):
-        label = f"{level:g}"
+        label = f"{level:g}{unit if level == scale_max else ''}"
         label_xy = (left + 8, round(bottom - level / scale_max * (bottom - top)) + 7)
         bounds = draw.textbbox(label_xy, label, font=label_font, anchor="lt")
         draw.rectangle((bounds[0] - 2, bounds[1] - 2, bounds[2] + 2, bounds[3] + 2), fill="white")
         draw.text(label_xy, label, font=label_font, anchor="lt", fill="black")
+    if show_latest:
+        draw_latest_total(draw, box, samples, scale_max)
+
+
+def draw_latest_total(draw, box, samples: Sequence[float | None], scale_max):
+    """Label the latest running total at the chart's right end, next to its line."""
+    latest = next((sample for sample in reversed(samples) if sample is not None), None)
+    if latest is None:
+        return
+    left, top, right, bottom = box
+    label, face = f"{latest:.1f}", font(20, True)
+    tl, tt, tr, tb = draw.textbbox((0, 0), label, font=face)
+    line_y = round(bottom - min(max(latest, 0), scale_max) / scale_max * (bottom - top))
+    # Above the end of the line when it fits below the chart top, otherwise below it.
+    y = line_y - 7 - (tb - tt)
+    if y < top + 3:
+        y = line_y + 7
+    x = right - 4 - (tr - tl)
+    draw.rectangle((x - 3, y - 3, right - 1, y + tb - tt + 3), fill="white")
+    draw.text((x - tl, y - tt), label, font=face, fill="black")
 
 
 def draw_history_hours(draw, left, right, baseline, updated_at):
@@ -243,13 +273,16 @@ def draw_history_hours(draw, left, right, baseline, updated_at):
 
 
 def render(data: dict, updated_at: datetime, stale: bool = False, *,
-           history: dict[str, Sequence[float | None]] | None = None, history_positions=None) -> Image.Image:
+           history: dict[str, Sequence[float | None]] | None = None, history_positions=None,
+           charts: str = "power") -> Image.Image:
     """Draw the dashboard; every history spans now − HISTORY_HOURS through now.
 
     Samples are ordered oldest to newest; None is a gap. Optional positions
     give true fractions of the 12-hour window for unevenly spaced history.
     Without positions samples are evenly spaced. `updated_at`
     is shown as-is in the legacy layout, so pass a Dublin-local time.
+    With charts="energy" both charts draw running daily totals instead of
+    power (history["pv_kwh"] and history["home_kwh"]), labelling the latest.
     """
     image = Image.new("1", (WIDTH, HEIGHT), 1)
     draw = ImageDraw.Draw(image)
@@ -270,9 +303,16 @@ def render(data: dict, updated_at: datetime, stale: bool = False, *,
         # The chart baselines remain axes; there is no separator between groups.
         for key, offset in (("pv_kw", 0), ("home_kw", 288)):
             chart_bottom = 270 + offset
-            draw_power_history(draw, (522, 148 + offset, 776, chart_bottom), history.get(key, ()),
-                               scale_max=5 if key == "pv_kw" else 3,
-                               guide_kw=2 if key == "pv_kw" else 1, positions=history_positions)
+            samples, unit = history.get(key, ()), ""
+            scale_max, guide_kw = (5, 2) if key == "pv_kw" else (3, 1)
+            energy = charts == "energy"
+            if energy:
+                samples, unit = history.get(ENERGY_KEYS[key], ()), "kWh"
+                scale_max = energy_scale(samples)
+                guide_kw = scale_max / 2
+            draw_power_history(draw, (522, 148 + offset, 776, chart_bottom), samples,
+                               scale_max=scale_max, guide_kw=guide_kw, positions=history_positions,
+                               unit=unit, show_latest=energy)
             draw_history_hours(draw, 522, 776, chart_bottom, updated_at)
             # The current reading has its own space above the clipped chart.
             number_top = power_reading(draw, (650, 80 + offset), f"{value(data, key):.1f}")
@@ -344,7 +384,9 @@ def render(data: dict, updated_at: datetime, stale: bool = False, *,
 
 
 def render_png(data: dict, updated_at: datetime, stale: bool = False, *,
-               history: dict[str, Sequence[float | None]] | None = None, history_positions=None) -> bytes:
+               history: dict[str, Sequence[float | None]] | None = None, history_positions=None,
+               charts: str = "power") -> bytes:
     output = io.BytesIO()
-    render(data, updated_at, stale, history=history, history_positions=history_positions).save(output, format="PNG", optimize=True)
+    render(data, updated_at, stale, history=history, history_positions=history_positions,
+           charts=charts).save(output, format="PNG", optimize=True)
     return output.getvalue()
