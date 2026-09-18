@@ -61,6 +61,17 @@ class TestComputeWindowTimes:
         # Now should be within the window
         assert start <= now < end
 
+    def test_midnight_crossing_active_post_midnight(self):
+        """Window 22:00-02:00, now=01:00 → yesterday's start, recognized as active."""
+        mock_clock.set_time(1, 0)
+        now = mock_clock.get_now()
+        window = DischargeWindow(
+            id="t6", name="T", start_time="22:00", duration_minutes=240, target_soc=0,
+        )
+        start, end = WindowScheduler._compute_window_times(window, now)
+        assert start == now.replace(hour=22) - timedelta(days=1)
+        assert start <= now < end
+
     def test_same_day_window(self):
         """Window at 08:00 for 120min, now=06:00 → today 08:00-10:00."""
         mock_clock.set_time(6, 0)
@@ -286,6 +297,81 @@ class TestSchedulerStatus:
         status = scheduler.get_status("inactive1")
         assert status.active is False
         assert status.window_id == "inactive1"
+
+
+# ---------------------------------------------------------------------------
+# Scheduler loop across days
+# ---------------------------------------------------------------------------
+
+class YieldingSession(FakeSession):
+    """FakeSession whose SOC read yields to the event loop, like the real cloud call."""
+
+    async def call(self, method: str, *args, **kwargs):
+        await asyncio.sleep(0)
+        return await super().call(method, *args, **kwargs)
+
+
+async def _stop(task):
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+class TestSchedulerLoop:
+    async def test_single_window_runs_again_next_night(self, app_state, config_path, mock_notifications, patch_sleep):
+        """With only one enabled window, it must start again the next night after finishing."""
+        mock_clock.set_time(21, 0)
+        config_store.save_windows([
+            DischargeWindow(
+                id="nightly", name="Night Export", start_time="22:00",
+                duration_minutes=60, target_soc=0, notify=False,
+            ),
+        ])
+        scheduler = WindowScheduler(app_state, FakeSession(soc_sequence=[80]), BATTERY_DN)
+        launches = []
+        launch = scheduler._launch_window
+
+        async def recording_launch(window, end_time):
+            launches.append(mock_clock.get_now())
+            return await launch(window, end_time)
+
+        scheduler._launch_window = recording_launch
+        task = asyncio.create_task(scheduler.run())
+        for _ in range(2000):
+            await asyncio.sleep(0)
+            if len(launches) >= 2:
+                break
+        await _stop(task)
+        await scheduler.stop_all()
+
+        assert len(launches) == 2
+        assert launches[1].date() == launches[0].date() + timedelta(days=1)
+        assert launches[1].hour == 22
+
+    async def test_failed_start_retries_at_intervals(self, app_state, config_path, mock_notifications, patch_sleep):
+        """A window that cannot start (SOC already at target) is retried every few minutes, not in a tight loop."""
+        mock_clock.set_time(21, 59)
+        config_store.save_windows([
+            DischargeWindow(
+                id="low", name="Low", start_time="22:00",
+                duration_minutes=60, target_soc=10, notify=False,
+            ),
+        ])
+        session = YieldingSession(soc_sequence=[5])
+        scheduler = WindowScheduler(app_state, session, BATTERY_DN)
+        window_end = mock_clock.get_now().replace(hour=23, minute=0)
+
+        task = asyncio.create_task(scheduler.run())
+        while mock_clock.get_now() < window_end and session.soc_index < 1000:
+            await asyncio.sleep(0)
+        await _stop(task)
+
+        assert "low" not in app_state.discharge_tasks
+        # One attempt at 22:00, then one per retry interval (30 s, rounded up to a
+        # virtual minute) until 23:00 — not thousands
+        assert 2 <= session.soc_index <= 61
 
 
 # ---------------------------------------------------------------------------

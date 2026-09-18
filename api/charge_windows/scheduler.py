@@ -28,6 +28,9 @@ class ChargeWindowScheduler:
         self._app_state = app_state
         self._session = session
         self._battery_dn = battery_dn
+        # Start time of the occurrence each window was last launched for, so a
+        # finished or stopped occurrence is not launched again
+        self._launched: dict[str, datetime] = {}
 
     # ------------------------------------------------------------------
     # Main scheduler loop
@@ -58,19 +61,20 @@ class ChargeWindowScheduler:
 
             for w in enabled:
                 start_dt, peak_dt, end_dt = self._compute_window_times(w, now)
-                # Skip windows already running
-                if w.id in self._app_state.charge_tasks:
-                    continue
+                # Once an occurrence is under way (running, or already
+                # launched and since finished or stopped), plan the next day's
+                if start_dt <= now and (
+                    w.id in self._app_state.charge_tasks
+                    or self._launched.get(w.id) == start_dt
+                ):
+                    start_dt += timedelta(days=1)
+                    peak_dt += timedelta(days=1)
+                    end_dt += timedelta(days=1)
                 if next_start is None or start_dt < next_start:
                     next_window = w
                     next_start = start_dt
                     next_end = end_dt
                     next_peak = peak_dt
-
-            if next_window is None:
-                logger.info("All enabled charge windows already running, waiting for config change")
-                await self._wait_for_change()
-                continue
 
             wait_seconds = (next_start - get_now()).total_seconds()
             if wait_seconds > 0:
@@ -78,12 +82,14 @@ class ChargeWindowScheduler:
                     "Next charge window '%s' in %.0f min at %s",
                     next_window.name, wait_seconds / 60, next_start.isoformat(),
                 )
-                interrupted = await self._sleep_or_change(wait_seconds)
-                if interrupted:
-                    continue  # Config changed, re-evaluate
+                # Re-evaluate on waking: config may have changed, or the
+                # window may have been started by hand in the meantime
+                await self._sleep_or_change(wait_seconds)
+                continue
 
             # Time to start the window
             await self._launch_window(next_window, next_start, next_peak, next_end)
+            self._launched[next_window.id] = next_start
 
     # ------------------------------------------------------------------
     # Window time computation

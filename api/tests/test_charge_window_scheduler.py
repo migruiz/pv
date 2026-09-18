@@ -1,5 +1,6 @@
 """Tests for charge window scheduler."""
 
+import asyncio
 from datetime import timedelta
 
 import pytest
@@ -150,6 +151,41 @@ class TestMidWindowResume:
         await scheduler._check_mid_window_resume()
 
         assert window.id not in app_state.charge_tasks
+
+
+# ---------------------------------------------------------------------------
+# Scheduler loop across days
+# ---------------------------------------------------------------------------
+
+class TestSchedulerLoop:
+    async def test_single_window_runs_again_next_day(self, app_state, charge_config_path, patch_sleep, mock_notifications):
+        """With only one enabled window, it must start again the next day after finishing."""
+        mock_clock.set_time(9, 0)
+        config_store.save_windows([_make_window(start_time="10:00", peak_time="10:30", end_time="11:00")])
+        scheduler = ChargeWindowScheduler(app_state, FakeSession(), BATTERY_DN)
+        launches = []
+        launch = scheduler._launch_window
+
+        async def recording_launch(window, start_dt, peak_dt, end_dt):
+            launches.append(mock_clock.get_now())
+            return await launch(window, start_dt, peak_dt, end_dt)
+
+        scheduler._launch_window = recording_launch
+        task = asyncio.create_task(scheduler.run())
+        for _ in range(2000):
+            await asyncio.sleep(0)
+            if len(launches) >= 2:
+                break
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        await scheduler.stop_all()
+
+        assert len(launches) == 2
+        assert launches[1].date() == launches[0].date() + timedelta(days=1)
+        assert launches[1].hour == 10
 
 
 # ---------------------------------------------------------------------------
