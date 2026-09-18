@@ -9,9 +9,10 @@ Inverter ──> pv-solar-api (Pi) ──GET /dashboard.png──> Kindle
 
 ## What the screen shows
 
-- Battery % and a battery bar
-- Battery-empty time: `↓ 11:40p` is a **fixed placeholder**, not yet calculated
-- Solar production kW (sun icon) and home consumption kW (bolt icon)
+- Battery % and a battery outline filled with the last 12 hours of charge, plus a charging or discharging icon
+- Battery-empty time, estimated from sunset and a baseline house load (see [Simple sunset battery estimate](#simple-sunset-battery-estimate)), with today's sunset time below it
+- A grid pylon and export kW, only while exporting
+- Solar production kW (sun icon) and home consumption kW (bolt icon), each with a 12-hour chart
 - `Updated HH:MM:SS` (Dublin time of the inverter reading), or a **STALE DATA** banner with the last good readings when the inverter stops answering
 
 ## How it works

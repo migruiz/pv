@@ -308,7 +308,7 @@ Charge and discharge windows cannot overlap. Both config stores check against ea
 
 ## Kindle Dashboard
 
-A jailbroken Kindle 4 (non-touch) shows an e-ink dashboard: battery %, battery bar, battery-empty time (`↓ 11:40p` is a fixed placeholder, not yet calculated), solar kW, home kW and `Updated HH:MM:SS` (Dublin time of the inverter reading). Full device and install docs: `kindle/README.md`.
+A jailbroken Kindle 4 (non-touch) shows an e-ink dashboard: battery % with 12 hours of charge history inside the battery outline, battery-empty time (estimated from sunset and a 0.25 kW baseline load, `kindle_dashboard/estimate.py`) with today's sunset time, grid export kW while exporting, solar kW and home kW each with a 12-hour chart, and `Updated HH:MM:SS` (Dublin time of the inverter reading). Full device and install docs: `kindle/README.md`.
 
 - **API** (`api/kindle_dashboard/`): `GET /dashboard.png` uses the inverter reader's cached dashboard, renders an 800x600 1-bit PNG with Pillow and bundled DejaVu fonts (in a thread, only when a new reading arrives), and always returns 200. When the inverter reading goes stale it redraws the last good readings with a **STALE DATA** banner
 - **Auth**: `Authorization: Bearer <KINDLE_TOKEN>`, a read-only token separate from `API_KEY`. Unset `KINDLE_TOKEN` disables the endpoint (401)
