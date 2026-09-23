@@ -89,7 +89,7 @@ pv/
 └── app/                          # Android mobile app (Kotlin/Compose)
     ├── app/src/main/java/ovh/tenjo/pv/
     │   ├── MainActivity.kt       # Navigation (dashboard / window screen), API config
-    │   ├── SolarViewModel.kt     # Dashboard + discharge window state, save/delete
+    │   ├── SolarViewModel.kt     # Dashboard + window state, save/delete; in the foreground: dashboard at once then every 2 s, windows every 15 s
     │   ├── api/SolarApi.kt       # Retrofit client, data models, API error reasons
     │   ├── AutoDischargeService.kt     # Ongoing "Discharging" notification
     │   ├── PvFirebaseMessagingService.kt # FCM message handler

@@ -173,18 +173,23 @@ class SolarViewModel : ViewModel() {
 
     // -- Auto-refresh (lifecycle-aware) --
 
+    /** Called each time the app comes to the foreground. */
     fun startAutoRefresh() {
         if (autoRefreshJob?.isActive == true) return
         autoRefreshJob = viewModelScope.launch {
-            var tick = 0
-            while (isActive) {
-                // Readings come straight from the inverter, refreshed on the Pi every 3 s
-                delay(3_000)
-                // Wait for the request so a slow network never stacks up overlapping calls
-                loadDashboard(showLoading = false, showError = false).join()
-                // Window states change slowly: every 15 s
-                if (tick++ % 5 == 0) {
-                    loadWindows()
+            // Dashboard: straight away, so the app never shows readings from when it was last open,
+            // then every 2 s. Waiting for each request means a slow network never stacks up calls.
+            launch {
+                while (isActive) {
+                    loadDashboard(showLoading = false, showError = false).join()
+                    delay(2_000)
+                }
+            }
+            // Window states change slowly: every 15 s
+            launch {
+                while (isActive) {
+                    loadWindows().join()
+                    delay(15_000)
                 }
             }
         }
