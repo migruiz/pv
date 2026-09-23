@@ -32,27 +32,6 @@ class PvFirebaseMessagingService : FirebaseMessagingService() {
             "auto_discharge_stopped" -> {
                 AutoDischargeService.stop(this)
             }
-            "charge_window_active" -> {
-                ChargeWindowService.start(
-                    this,
-                    power = data["power_w"] ?: "?",
-                    minutes = "0",
-                    windowName = windowName,
-                    isUpdate = false,
-                )
-            }
-            "charge_window_update" -> {
-                ChargeWindowService.start(
-                    this,
-                    power = data["power_w"] ?: "?",
-                    minutes = data["minutes_remaining"] ?: "0",
-                    windowName = windowName,
-                    isUpdate = true,
-                )
-            }
-            "charge_window_stopped" -> {
-                ChargeWindowService.stop(this)
-            }
         }
     }
 }

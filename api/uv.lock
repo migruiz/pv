@@ -529,19 +529,6 @@ wheels = [
 ]
 
 [[package]]
-name = "fusion-solar-py"
-version = "0.1.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cryptography" },
-    { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/12/9f/7c86d1760e0609bf7c7a91c1b38e958b6205e7a18d0d38b139a3f038b823/fusion_solar_py-0.1.1.tar.gz", hash = "sha256:4707937044bf91629f4bcbf0468b6fc09f618a329b3a0cb380ac3148c8fa3e11", size = 29774, upload-time = "2025-11-22T19:31:33.952Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/78/4a/05f6f89f63c3a7da80b1c6aa29f8c820a799bc8c883ca12c04fd044fda96/fusion_solar_py-0.1.1-py3-none-any.whl", hash = "sha256:80b92b767dcea1cfc14478ec416f442d3ea6196ad86e68aa1c8eab21eebcacda", size = 23537, upload-time = "2025-11-22T19:31:32.938Z" },
-]
-
-[[package]]
 name = "google-api-core"
 version = "2.30.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1202,7 +1189,6 @@ dependencies = [
     { name = "astral" },
     { name = "fastapi", extra = ["standard"] },
     { name = "firebase-admin" },
-    { name = "fusion-solar-py" },
     { name = "httpx" },
     { name = "huawei-solar", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "huawei-solar", version = "3.0.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -1223,7 +1209,6 @@ requires-dist = [
     { name = "astral", specifier = ">=3.2,<4" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.115" },
     { name = "firebase-admin", specifier = ">=6.5" },
-    { name = "fusion-solar-py", specifier = ">=0.1.1" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "huawei-solar", specifier = ">=2.5.0" },
     { name = "pillow", specifier = ">=12.3.0" },

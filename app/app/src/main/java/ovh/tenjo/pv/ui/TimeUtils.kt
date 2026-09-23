@@ -26,32 +26,6 @@ fun calcEndTime(startTime: String, durationMinutes: Int): String {
     return minutesToTimeString(start + durationMinutes)
 }
 
-/**
- * Estimate charge energy (kWh) for a cosine bell curve charge window.
- *
- * The integral of cosine interpolation from power_a to power_b over T hours
- * equals (power_a + power_b) / 2 * T — the average of the two endpoints.
- */
-fun estimateChargeEnergy(
-    startTime: String, startPower: Int,
-    peakTime: String, peakPower: Int,
-    endTime: String, endPower: Int,
-): Double {
-    val startMin = parseTimeToMinutes(startTime)
-    var peakMin = parseTimeToMinutes(peakTime)
-    var endMin = parseTimeToMinutes(endTime)
-    if (peakMin <= startMin) peakMin += 1440
-    if (endMin <= peakMin) endMin += 1440
-
-    val seg1Hours = (peakMin - startMin) / 60.0
-    val seg2Hours = (endMin - peakMin) / 60.0
-
-    val seg1Wh = (startPower + peakPower) / 2.0 * seg1Hours
-    val seg2Wh = (peakPower + endPower) / 2.0 * seg2Hours
-
-    return (seg1Wh + seg2Wh) / 1000.0
-}
-
 /** Estimate discharge energy (kWh) based on SOC delta and 4.8 kWh usable capacity. */
 fun estimateDischargeEnergy(currentSoc: Double, targetSoc: Double): Double {
     val delta = (currentSoc - targetSoc).coerceAtLeast(0.0)

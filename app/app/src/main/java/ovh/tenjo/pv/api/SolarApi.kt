@@ -1,6 +1,8 @@
 package ovh.tenjo.pv.api
 
+import com.google.gson.JsonParser
 import com.google.gson.annotations.SerializedName
+import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.*
@@ -25,14 +27,11 @@ data class DashboardData(
     @SerializedName("max_charge_power") val maxChargePower: Int = 2500,
 )
 
-data class HealthResponse(
-    val status: String,
-)
-
 // ------------------------------------------------------------------
 // Data models — Discharge Windows
 // ------------------------------------------------------------------
 
+/** A saved window, with what the API is doing with it right now. */
 data class DischargeWindow(
     val id: String,
     val name: String,
@@ -41,118 +40,29 @@ data class DischargeWindow(
     @SerializedName("target_soc") val targetSoc: Double,
     val notify: Boolean,
     val enabled: Boolean,
+    val state: WindowState = WindowState(),
+    /** Only on a save's reply: saved, but the inverter did not respond yet (the API retries). */
+    val warning: String? = null,
+) {
+    fun settings() = WindowSettings(name, startTime, durationMinutes, targetSoc, notify, enabled)
+}
+
+data class WindowState(
+    val discharging: Boolean = false,
+    @SerializedName("target_reached") val targetReached: Boolean = false,
+    @SerializedName("power_kw") val powerKw: Double? = null,
+    val soc: Double? = null,
+    @SerializedName("minutes_remaining") val minutesRemaining: Double? = null,
 )
 
-data class DischargeWindowCreate(
+/** What the window screen edits and saves: the API applies it straight away. */
+data class WindowSettings(
     val name: String,
     @SerializedName("start_time") val startTime: String,
     @SerializedName("duration_minutes") val durationMinutes: Int,
     @SerializedName("target_soc") val targetSoc: Double,
-    val notify: Boolean = true,
-    val enabled: Boolean = true,
-)
-
-data class DischargeWindowUpdate(
-    val name: String? = null,
-    @SerializedName("start_time") val startTime: String? = null,
-    @SerializedName("duration_minutes") val durationMinutes: Int? = null,
-    @SerializedName("target_soc") val targetSoc: Double? = null,
-    val notify: Boolean? = null,
-    val enabled: Boolean? = null,
-)
-
-data class DischargeWindowStatus(
-    @SerializedName("window_id") val windowId: String,
-    @SerializedName("window_name") val windowName: String,
-    val active: Boolean,
-    @SerializedName("current_soc") val currentSoc: Double? = null,
-    @SerializedName("discharge_power_kw") val dischargePowerKw: Double? = null,
-    @SerializedName("remaining_energy_kwh") val remainingEnergyKwh: Double? = null,
-    @SerializedName("target_time") val targetTime: String? = null,
-    @SerializedName("minutes_remaining") val minutesRemaining: Double? = null,
-    @SerializedName("last_adjustment") val lastAdjustment: String? = null,
-)
-
-data class StartWindowResponse(
-    val success: Boolean,
-    @SerializedName("window_id") val windowId: String? = null,
-    @SerializedName("window_name") val windowName: String? = null,
-    @SerializedName("initial_soc") val initialSoc: Double? = null,
-    @SerializedName("discharge_power_kw") val dischargePowerKw: Double? = null,
-    @SerializedName("target_time") val targetTime: String? = null,
-    val detail: String? = null,
-)
-
-data class StopWindowResponse(
-    val success: Boolean,
-    val detail: String? = null,
-)
-
-// ------------------------------------------------------------------
-// Data models — Charge Windows
-// ------------------------------------------------------------------
-
-data class ChargeWindow(
-    val id: String,
-    val name: String,
-    @SerializedName("start_time") val startTime: String,
-    @SerializedName("start_power") val startPower: Int,
-    @SerializedName("peak_time") val peakTime: String,
-    @SerializedName("peak_power") val peakPower: Int,
-    @SerializedName("end_time") val endTime: String,
-    @SerializedName("end_power") val endPower: Int,
     val notify: Boolean,
     val enabled: Boolean,
-)
-
-data class ChargeWindowCreate(
-    val name: String,
-    @SerializedName("start_time") val startTime: String,
-    @SerializedName("start_power") val startPower: Int,
-    @SerializedName("peak_time") val peakTime: String,
-    @SerializedName("peak_power") val peakPower: Int,
-    @SerializedName("end_time") val endTime: String,
-    @SerializedName("end_power") val endPower: Int,
-    val notify: Boolean = true,
-    val enabled: Boolean = true,
-)
-
-data class ChargeWindowUpdate(
-    val name: String? = null,
-    @SerializedName("start_time") val startTime: String? = null,
-    @SerializedName("start_power") val startPower: Int? = null,
-    @SerializedName("peak_time") val peakTime: String? = null,
-    @SerializedName("peak_power") val peakPower: Int? = null,
-    @SerializedName("end_time") val endTime: String? = null,
-    @SerializedName("end_power") val endPower: Int? = null,
-    val notify: Boolean? = null,
-    val enabled: Boolean? = null,
-)
-
-data class ChargeWindowStatus(
-    @SerializedName("window_id") val windowId: String,
-    @SerializedName("window_name") val windowName: String,
-    val active: Boolean,
-    @SerializedName("current_power_w") val currentPowerW: Int? = null,
-    val progress: Double? = null,
-    @SerializedName("elapsed_minutes") val elapsedMinutes: Double? = null,
-    @SerializedName("total_minutes") val totalMinutes: Int? = null,
-    @SerializedName("end_time") val endTime: String? = null,
-    @SerializedName("minutes_remaining") val minutesRemaining: Double? = null,
-    @SerializedName("last_adjustment") val lastAdjustment: String? = null,
-)
-
-data class ChargeWindowStartResponse(
-    val success: Boolean,
-    @SerializedName("window_id") val windowId: String? = null,
-    @SerializedName("window_name") val windowName: String? = null,
-    @SerializedName("initial_power_w") val initialPowerW: Int? = null,
-    @SerializedName("end_time") val endTime: String? = null,
-)
-
-data class ChargeWindowStopResponse(
-    val success: Boolean,
-    val detail: String? = null,
 )
 
 // ------------------------------------------------------------------
@@ -161,83 +71,47 @@ data class ChargeWindowStopResponse(
 
 interface SolarApiService {
 
-    @GET("health")
-    suspend fun health(): HealthResponse
-
     @GET("dashboard")
     suspend fun getDashboard(): DashboardData
-
-    // -- Discharge Windows CRUD --
 
     @GET("discharge-windows")
     suspend fun getDischargeWindows(): List<DischargeWindow>
 
-    @GET("discharge-windows/{windowId}")
-    suspend fun getDischargeWindow(@Path("windowId") windowId: String): DischargeWindow
-
     @POST("discharge-windows")
-    suspend fun createDischargeWindow(@Body body: DischargeWindowCreate): DischargeWindow
+    suspend fun createDischargeWindow(@Body body: WindowSettings): DischargeWindow
 
     @PUT("discharge-windows/{windowId}")
     suspend fun updateDischargeWindow(
         @Path("windowId") windowId: String,
-        @Body body: DischargeWindowUpdate,
+        @Body body: WindowSettings,
     ): DischargeWindow
 
     @DELETE("discharge-windows/{windowId}")
     suspend fun deleteDischargeWindow(@Path("windowId") windowId: String)
+}
 
-    // -- Discharge Window Control --
-
-    @GET("discharge-windows/status")
-    suspend fun getWindowStatuses(): List<DischargeWindowStatus>
-
-    @GET("discharge-windows/{windowId}/status")
-    suspend fun getWindowStatus(@Path("windowId") windowId: String): DischargeWindowStatus
-
-    @POST("discharge-windows/{windowId}/start")
-    suspend fun startWindow(@Path("windowId") windowId: String): StartWindowResponse
-
-    @POST("discharge-windows/{windowId}/stop")
-    suspend fun stopWindow(@Path("windowId") windowId: String): StopWindowResponse
-
-    // Backward-compatible: stop all active windows
-    @POST("batteries/{batteryId}/auto-discharge/stop")
-    suspend fun stopAllDischarge(@Path("batteryId") batteryId: String): StopWindowResponse
-
-    // -- Charge Windows CRUD --
-
-    @GET("charge-windows")
-    suspend fun getChargeWindows(): List<ChargeWindow>
-
-    @GET("charge-windows/{windowId}")
-    suspend fun getChargeWindow(@Path("windowId") windowId: String): ChargeWindow
-
-    @POST("charge-windows")
-    suspend fun createChargeWindow(@Body body: ChargeWindowCreate): ChargeWindow
-
-    @PUT("charge-windows/{windowId}")
-    suspend fun updateChargeWindow(
-        @Path("windowId") windowId: String,
-        @Body body: ChargeWindowUpdate,
-    ): ChargeWindow
-
-    @DELETE("charge-windows/{windowId}")
-    suspend fun deleteChargeWindow(@Path("windowId") windowId: String)
-
-    // -- Charge Window Control --
-
-    @GET("charge-windows/status")
-    suspend fun getChargeWindowStatuses(): List<ChargeWindowStatus>
-
-    @GET("charge-windows/{windowId}/status")
-    suspend fun getChargeWindowStatus(@Path("windowId") windowId: String): ChargeWindowStatus
-
-    @POST("charge-windows/{windowId}/start")
-    suspend fun startChargeWindow(@Path("windowId") windowId: String): ChargeWindowStartResponse
-
-    @POST("charge-windows/{windowId}/stop")
-    suspend fun stopChargeWindow(@Path("windowId") windowId: String): ChargeWindowStopResponse
+/** The API's reason for refusing a request ("Overlaps with ..."), or the error itself. */
+fun apiErrorMessage(e: Throwable): String {
+    val body = (e as? HttpException)?.response()?.errorBody()?.string()
+    if (body != null) {
+        try {
+            val detail = JsonParser.parseString(body).asJsonObject.get("detail")
+            return when {
+                detail == null -> body
+                detail.isJsonPrimitive -> detail.asString
+                // FastAPI validation errors: [{"loc": [..., "field"], "msg": "..."}]
+                detail.isJsonArray && detail.asJsonArray.size() > 0 -> detail.asJsonArray[0].asJsonObject.let {
+                    val field = it.getAsJsonArray("loc")?.lastOrNull()?.asString
+                    val msg = it.get("msg")?.asString ?: body
+                    if (field != null) "$field: $msg" else msg
+                }
+                else -> body
+            }
+        } catch (_: Exception) {
+            return body
+        }
+    }
+    return e.message ?: "Connection failed"
 }
 
 // ------------------------------------------------------------------
@@ -247,8 +121,6 @@ interface SolarApiService {
 object SolarApiClient {
     var baseUrl: String = "http://10.0.2.2:8000/"
     var apiKey: String = ""
-
-    const val BATTERY_ID = "NE=239198746"
 
     val service: SolarApiService by lazy {
         Retrofit.Builder()

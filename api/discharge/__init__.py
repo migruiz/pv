@@ -1,1 +1,1 @@
-"""Discharge windows package — configurable multi-window battery discharge system."""
+"""Discharge windows: saved settings, and the controller that makes the inverter follow them."""

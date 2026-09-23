@@ -19,7 +19,7 @@ SLOW_REGISTERS = [
     "accumulated_yield_energy",           # kWh
 ]
 
-# Used until the first settings read succeeds (the same defaults the cloud reader fell back to).
+# Used until the first settings read succeeds.
 SLOW_DEFAULTS = {
     "storage_working_mode_settings": 5,
     "storage_charge_from_grid_function": 1,

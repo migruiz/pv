@@ -32,7 +32,8 @@ def init_firebase():
         from firebase_admin import credentials
 
         cred = credentials.Certificate(str(sa_path))
-        firebase_admin.initialize_app(cred)
+        # A push must finish or fail within seconds: the controller sends them one at a time, in order
+        firebase_admin.initialize_app(cred, {"httpTimeout": 10})
         _initialized = True
         logger.info("Firebase Admin SDK initialized")
     except Exception as exc:
@@ -91,27 +92,3 @@ def notify_discharge_stopped(reason: str, window_name: str | None = None):
         "window_name": window_name or "",
     })
 
-
-def notify_charge_started(power_w: int, window_name: str | None = None):
-    _send({
-        "type": "charge_window_active",
-        "power_w": str(power_w),
-        "window_name": window_name or "",
-    })
-
-
-def notify_charge_update(power_w: int, minutes_remaining: float, window_name: str | None = None):
-    _send({
-        "type": "charge_window_update",
-        "power_w": str(power_w),
-        "minutes_remaining": f"{minutes_remaining:.0f}",
-        "window_name": window_name or "",
-    })
-
-
-def notify_charge_stopped(reason: str, window_name: str | None = None):
-    _send({
-        "type": "charge_window_stopped",
-        "reason": reason,
-        "window_name": window_name or "",
-    })

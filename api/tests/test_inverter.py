@@ -1,5 +1,6 @@
-"""Tests for the local inverter reader, its /dashboard mapping and GET /dashboard."""
+"""Tests for the local inverter reader, its commands, its /dashboard mapping and GET /dashboard."""
 
+import asyncio
 from datetime import datetime
 
 import pytest
@@ -45,6 +46,8 @@ class FakeClient:
         self.reads = []
         self.fail_with = None
         self.stopped = False
+        self.writes = []
+        self.accept_writes = True
 
     async def login(self, username, password):
         assert (username, password) == ("installer", "secret")
@@ -56,6 +59,12 @@ class FakeClient:
         if self.fail_with is not None:
             raise self.fail_with
         return Result(self.readings[name])
+
+    async def set(self, name, value):
+        if self.fail_with is not None:
+            raise self.fail_with
+        self.writes.append((name, value))
+        return self.accept_writes
 
     async def stop(self):
         self.stopped = True
@@ -281,6 +290,64 @@ class TestReader:
         data = reader.dashboard()
         assert (data["pv_kw"], data["operation_mode"]) == (5.052, 5)
         assert reader.status()["failed_rounds"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+class TestCommands:
+    async def test_write_sends_each_setting_in_order_over_the_polling_session(self):
+        client = FakeClient()
+        reader, handed_out, _ = make_reader(client)
+        await reader.step()
+        await reader.write([("storage_forcible_discharge_power", 500), ("forcible_charge_discharge_write", 2)])
+        assert client.writes == [("storage_forcible_discharge_power", 500), ("forcible_charge_discharge_write", 2)]
+        assert len(handed_out) == 1
+
+    async def test_write_without_a_session_raises(self):
+        reader, _, _ = make_reader(FakeClient())
+        with pytest.raises(InverterUnavailable, match="Not connected"):
+            await reader.write([("forcible_charge_discharge_write", 0)])
+
+    async def test_a_refused_write_raises(self):
+        client = FakeClient()
+        reader, _, _ = make_reader(client)
+        await reader.step()
+        client.accept_writes = False
+        with pytest.raises(InverterUnavailable, match="refused"):
+            await reader.write([("forcible_charge_discharge_write", 0)])
+
+    async def test_a_failed_write_raises(self):
+        client = FakeClient()
+        reader, _, _ = make_reader(client)
+        await reader.step()
+        client.fail_with = TimeoutError("No response received")
+        with pytest.raises(InverterUnavailable, match="failed"):
+            await reader.write([("forcible_charge_discharge_write", 0)])
+
+    async def test_a_write_waits_for_the_reading_round_in_progress(self):
+        client = FakeClient()
+        reader, _, _ = make_reader(client)
+        await reader.step()
+        reading, release = asyncio.Event(), asyncio.Event()
+        real_get = client.get
+
+        async def slow_get(name):
+            reading.set()
+            await release.wait()
+            return await real_get(name)
+
+        client.get = slow_get
+        poller = asyncio.create_task(reader.run())
+        await reading.wait()
+        writer = asyncio.create_task(reader.write([("forcible_charge_discharge_write", 0)]))
+        await asyncio.sleep(0.01)
+        assert client.writes == []
+        release.set()
+        await writer
+        assert client.writes == [("forcible_charge_discharge_write", 0)]
+        poller.cancel()
 
 
 # ---------------------------------------------------------------------------

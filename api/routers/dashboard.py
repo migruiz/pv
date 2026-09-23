@@ -11,10 +11,7 @@ router = APIRouter(dependencies=[Depends(require_api_key)])
 
 @router.get("/dashboard")
 async def get_dashboard(inverter=Depends(get_inverter)):
-    """Latest inverter readings, refreshed in the background every few seconds.
-
-    Only readings are local: battery control endpoints still go through FusionSolar.
-    """
+    """Latest inverter readings, refreshed in the background every few seconds."""
     try:
         return inverter.dashboard()
     except InverterUnavailable as exc:

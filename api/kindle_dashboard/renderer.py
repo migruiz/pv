@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from discharge.power_calculator import remaining_energy_kwh
+from discharge.power import remaining_energy_kwh
 from kindle_dashboard.estimate import clock_text, estimate_battery
 
 WIDTH, HEIGHT = 800, 600

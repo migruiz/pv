@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from astral import Observer
 from astral.sun import sunrise, sunset
 
-from discharge.power_calculator import remaining_energy_kwh
+from discharge.power import remaining_energy_kwh
 
 DUBLIN = ZoneInfo("Europe/Dublin")
 DUBLIN_OBSERVER = Observer(latitude=53.3498, longitude=-6.2603)

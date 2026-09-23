@@ -1,12 +1,11 @@
 [project]
 name = "pv-solar-api"
 version = "0.1.0"
-description = "FastAPI middleware for Huawei FusionSolar PV monitoring and control"
+description = "Huawei inverter monitoring and discharge windows, over the inverter's local Modbus link"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi[standard]>=0.115",
     "python-dotenv>=1.0",
-    "fusion-solar-py>=0.1.1",
     "httpx>=0.27",
     "tzdata>=2024.1",
     "firebase-admin>=6.5",

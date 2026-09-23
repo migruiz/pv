@@ -133,21 +133,6 @@ function stopSocSimulation() {
 }
 
 // ---------------------------------------------------------------------------
-// Signal IDs → human-readable names
-// ---------------------------------------------------------------------------
-
-const SIGNAL_NAMES: Record<string, string> = {
-  "230320245": "charge_discharge_mode",
-  "230320259": "forced_power_kw",
-  "230320257": "setting_mode",
-  "230320281": "forced_period_min",
-  "10011": "max_charge_power",
-  "230320241": "operation_mode",
-  "230320279": "charge_from_ac",
-  "230320283": "tou_windows",
-};
-
-// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -167,58 +152,68 @@ export function resetState() {
   recalculateGrid();
 }
 
-export function handleConfigSignals(
-  dn: string,
-  changeValues: { id: string; value: string }[]
-) {
-  // Log the command
-  const decoded: Record<string, string> = {};
-  for (const { id, value } of changeValues) {
-    decoded[SIGNAL_NAMES[id] || id] = value;
+/** Readings in the inverter's register names and units, as the Python API's InverterReader expects. */
+export function registers(): Record<string, number> {
+  const meterW = (state.grid_importing ? -state.grid_kw : state.grid_kw) * 1000;
+  return {
+    input_power: state.pv_kw * 1000,
+    // The meter sits at the grid connection: inverter output = home + export (- import)
+    active_power: state.home_kw * 1000 + meterW,
+    power_meter_active_power: meterW, // positive = exporting
+    storage_charge_discharge_power: (state.battery_charging ? 1 : -1) * state.battery_power_kw * 1000, // positive = charging
+    storage_state_of_capacity: state.battery_soc,
+    daily_yield_energy: state.energy_today_kwh,
+    storage_current_day_discharge_capacity: state.discharged_today_kwh,
+    storage_working_mode_settings: state.operation_mode,
+    storage_charge_from_grid_function: state.charge_from_ac,
+    storage_maximum_charging_power: state.max_charge_power,
+    accumulated_yield_energy: state.total_energy_kwh,
+  };
+}
+
+/** Register writes from the Python API: the forced charge/discharge settings and command. */
+export function writeRegisters(values: Record<string, number>) {
+  for (const [name, value] of Object.entries(values)) {
+    switch (name) {
+      case "storage_forcible_discharge_power":
+      case "storage_forcible_charge_power":
+        state.forced_power_kw = value / 1000;
+        break;
+      case "storage_forced_charging_and_discharging_period":
+        state.forced_duration_min = value;
+        break;
+      case "storage_forcible_charge_discharge_setting_mode": // time or SOC target: not simulated
+        break;
+      case "forcible_charge_discharge_write": // 0=Stop, 1=Charge, 2=Discharge
+        applyForcedCommand(value);
+        break;
+      default:
+        throw new Error(`Unknown register ${name}`);
+    }
   }
+}
+
+function applyForcedCommand(mode: number) {
+  state.forced_mode = mode;
+  if (mode === 0) {
+    state.battery_power_kw = 0;
+    stopSocSimulation();
+  } else {
+    state.battery_power_kw = state.forced_power_kw;
+    state.battery_charging = mode === 1;
+    startSocSimulation();
+  }
+  recalculateGrid();
+
   state.command_log.push({
     timestamp: new Date().toISOString(),
-    signals: decoded,
+    signals: {
+      charge_discharge_mode: String(mode),
+      ...(mode === 0 ? {} : { forced_power_kw: state.forced_power_kw.toFixed(3), period_min: String(state.forced_duration_min) }),
+    },
   });
   // Keep last 50 entries
   if (state.command_log.length > 50) {
     state.command_log = state.command_log.slice(-50);
   }
-
-  // Apply signal values
-  for (const { id, value } of changeValues) {
-    switch (id) {
-      case "230320245": // charge_discharge_mode
-        state.forced_mode = parseInt(value);
-        if (state.forced_mode === 0) {
-          state.battery_power_kw = 0;
-          stopSocSimulation();
-        } else {
-          startSocSimulation();
-        }
-        break;
-      case "230320259": // forced_power_kw
-        state.forced_power_kw = parseFloat(value);
-        break;
-      case "230320257": // setting_mode (ignored for simulation)
-        break;
-      case "230320281": // forced_period_min
-        state.forced_duration_min = parseInt(value);
-        break;
-      case "10011": // max_charge_power
-        state.max_charge_power = parseInt(value);
-        break;
-      case "230320241": // operation_mode
-        state.operation_mode = parseInt(value);
-        break;
-      case "230320279": // charge_from_ac
-        state.charge_from_ac = parseInt(value);
-        break;
-      case "230320283": // tou_windows (logged but not simulated)
-        break;
-    }
-  }
-
-  recalculateGrid();
-  return { success: true, failCode: 0 };
 }

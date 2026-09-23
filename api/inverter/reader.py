@@ -2,7 +2,8 @@
 
 A single Modbus session serves every client: /dashboard and the Kindle's /dashboard.png only read
 the cache, so the load on the inverter stays the same however often the app or the Kindle refresh.
-The inverter answers one local session at a time, so nothing else should poll it while the API runs.
+The inverter answers one local session at a time, so battery commands (write) go over this same
+session, between two reading rounds.
 """
 
 import asyncio
@@ -19,7 +20,7 @@ NOT_AUTHENTICATED = "exception_code=128"
 
 
 class InverterUnavailable(RuntimeError):
-    """There is no reading recent enough to show."""
+    """No reading recent enough to show, or a battery command could not be written."""
 
 
 class LoginRejected(RuntimeError):
@@ -72,6 +73,8 @@ class InverterReader:
         self._logins = 0
         self._last_error: str | None = None
         self._stopped: str | None = None
+        # One request at a time on the session: a write waits for the reading round in progress
+        self._lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Cache (used by the routers)
@@ -110,7 +113,8 @@ class InverterReader:
         while True:
             started = time.monotonic()
             try:
-                await self.step()
+                async with self._lock:
+                    await self.step()
             except LoginRejected as exc:
                 self._stopped = str(exc)
                 logger.error("%s", exc)
@@ -148,6 +152,28 @@ class InverterReader:
 
     async def stop(self):
         await self._disconnect()
+
+    # ------------------------------------------------------------------
+    # Commands
+    # ------------------------------------------------------------------
+
+    async def write(self, settings: list[tuple[str, object]]):
+        """Write settings in order, between two reading rounds.
+
+        Raises InverterUnavailable while there is no session, and on any refused or failed write. Nothing
+        is retried here: the caller tries again later, and the next reading round renews an expired login.
+        """
+        async with self._lock:
+            if self._client is None:
+                reason = self._stopped or self._last_error or "connecting"
+                raise InverterUnavailable(f"Not connected to the inverter: {reason}")
+            for name, value in settings:
+                try:
+                    accepted = await self._client.set(name, value)
+                except Exception as exc:
+                    raise InverterUnavailable(f"Writing {name} failed: {exc}") from exc
+                if not accepted:
+                    raise InverterUnavailable(f"The inverter refused {name} = {value}")
 
     async def _connect(self):
         self._client = await self._client_factory(self._host, self._port)

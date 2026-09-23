@@ -124,35 +124,6 @@ forecast later solar/cheap-rate charging, scheduled export, extra appliance
 loads, a reserve or conversion losses. The preview still uses mock SOC/history;
 its sunset is real for the current date and its empty time is calculated.
 
-### FusionSolar history verification (15 September 2026)
-
-Read-only cloud requests using the existing saved session returned all three
-series in five-minute samples. For the requested 00:41–12:41 Dublin window,
-143 aligned samples were available from 00:45 through 12:35, without internal
-gaps; the newest few minutes had not reached the cloud yet.
-
-- PV: `/rest/pvms/web/device/v1/device-history-data`, inverter DN,
-  signal `30017` (DC input kW, matching the local reader's `pv_kw`).
-- Battery SOC: the same endpoint, battery DN, signal `30007` (%).
-  Signal `30005` also supplies signed battery kW, positive when charging.
-- Home: `/rest/pvms/web/station/v1/overview/energy-balance`, `usePower` (kW).
-  The plant `soc` array was empty, so battery device history is required.
-
-Device responses use `data[signal].pmDataList`, with Unix-second `startTime`
-and `counterValue`. The request's `date` is milliseconds: use local noon on
-the requested day, then validate returned dates. Dublin midnight during summer
-selected the previous day in the device endpoint. Plant requests use `timeDim=2`,
-local-midnight `queryTime` in milliseconds, `timeZoneStr=Europe/Dublin` and the
-date's UTC offset in hours as `timeZone`. Its `xAxis` contains Dublin-local
-date/time strings aligned with the value arrays. Across midnight, fetch both
-days and filter the merged result by actual timestamps, in UTC.
-
-Device history uses `1.7976931348623157e+308` for unavailable/future samples;
-plant history uses `--`. Preserve those as missing, never zero. The plant's
-`productPower` differed slightly from device DC power, so use device `30017`
-for consistency with current solar readings. Plant `chargeAndDisChargePower`
-uses the opposite sign to device `30005`.
-
 ### Persistent API history
 
 The API stores history in `/data/history.sqlite3` on its existing Docker volume
@@ -162,18 +133,11 @@ power are averaged across the polls, while SOC is the latest percentage.
 Thirty days are retained. SQLite uses WAL mode, and disk I/O runs off the async
 event loop. Storage failures do not reconnect the inverter or hide live readings.
 
-On first deployment, a background job seeds the preceding twelve hours from
-FusionSolar using the existing serialized cloud session. It tries at most three
-times per startup and records completion in the database. Once seeded, restarts
-do not request cloud chart history again. Local records take precedence over
-cloud samples. If initial backfill is unavailable, live collection continues.
-
 `/dashboard.png` reads only the inverter cache and local database. It makes no
-cloud or inverter requests itself. All charts use real timestamps, ending at
-the current reading and starting twelve hours earlier; the renderer connects
-adjacent five-minute cloud points and minute-level local points, leaving longer
-outages blank. The cache is invalidated both by new readings and completed seed
-imports. Existing Kindle authentication, polling and stale-data banner remain.
+inverter requests itself. All charts use real timestamps, ending at the current
+reading and starting twelve hours earlier; the renderer connects minute-level
+points and leaves gaps longer than 90 seconds blank. The cache is invalidated by
+new readings. Existing Kindle authentication, polling and stale-data banner remain.
 
 ## Tests
 

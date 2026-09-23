@@ -43,7 +43,7 @@ if not errorlevel 1 (
 )
 
 echo [INFO] Running container %CONTAINER_NAME% from image %IMAGE_NAME% ...
-docker run -d --name %CONTAINER_NAME% -p %HOST_PORT%:%CONTAINER_PORT% --env-file "%ENV_FILE%" -v pv-cookies:/data %IMAGE_NAME%
+docker run -d --name %CONTAINER_NAME% -p %HOST_PORT%:%CONTAINER_PORT% --env-file "%ENV_FILE%" -v pv-data:/data %IMAGE_NAME%
 if errorlevel 1 (
     echo [ERROR] Failed to run container.
     exit /b 1

@@ -30,6 +30,7 @@ class AutoDischargeService : Service() {
             NotificationDismissReceiver.lastSoc = soc
             NotificationDismissReceiver.lastMinutes = minutes
             NotificationDismissReceiver.lastWindowName = windowName
+            if (!NotificationDismissReceiver.isActive) activeSince = System.currentTimeMillis()
             NotificationDismissReceiver.isActive = true
             val intent = Intent(context, AutoDischargeService::class.java).apply {
                 putExtra(EXTRA_POWER, power)
@@ -44,6 +45,19 @@ class AutoDischargeService : Service() {
         fun stop(context: Context) {
             NotificationDismissReceiver.isActive = false
             context.stopService(Intent(context, AutoDischargeService::class.java))
+        }
+
+        private var activeSince = 0L
+
+        /**
+         * A list loaded at listFetchedAt shows no window discharging: take the notification down if that
+         * list arrived over a minute after the notification went up. The minute covers a list requested
+         * just before the discharge started.
+         */
+        fun stopIfStale(context: Context, listFetchedAt: Long) {
+            if (NotificationDismissReceiver.isActive && listFetchedAt - activeSince > 60_000) {
+                stop(context)
+            }
         }
     }
 
@@ -75,12 +89,6 @@ class AutoDischargeService : Service() {
     }
 
     private fun buildNotification(power: String, soc: String, hours: Int, mins: Int, windowName: String = ""): android.app.Notification {
-        val stopIntent = Intent(this, StopDischargeBroadcastReceiver::class.java)
-        val stopPendingIntent = PendingIntent.getBroadcast(
-            this, 0, stopIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-
         val tapIntent = Intent(this, MainActivity::class.java).apply {
             this.flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
@@ -105,7 +113,6 @@ class AutoDischargeService : Service() {
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setContentIntent(tapPendingIntent)
             .setDeleteIntent(dismissPendingIntent)
-            .addAction(R.drawable.ic_stop, "Stop", stopPendingIntent)
             .build()
     }
 }

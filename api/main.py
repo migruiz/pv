@@ -1,5 +1,5 @@
 """
-PV Solar API — FastAPI middleware for Huawei FusionSolar.
+PV Solar API: live readings from the Huawei inverter over its WiFi hotspot, and discharge windows.
 
 Run with:  uvicorn main:app --reload
 """
@@ -7,28 +7,19 @@ Run with:  uvicorn main:app --reload
 import asyncio
 import logging
 import os
-from pathlib import Path
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
 import notifications
-from config import (
-    BATTERY_DN,
-    INVERTER_HOST,
-    INVERTER_POLL_INTERVAL,
-    INVERTER_PORT,
-    KEEP_ALIVE_INTERVAL,
-    MOCK_MODE,
-    MOCK_URL,
-)
-from charge_windows.router_control import router as charge_control_router
-from charge_windows.router_windows import router as charge_windows_router
-from charge_windows.scheduler import ChargeWindowScheduler
-from discharge.router_control import compat_router, router as control_router
-from discharge.router_windows import router as windows_router
-from discharge.scheduler import WindowScheduler
+from config import INVERTER_HOST, INVERTER_POLL_INTERVAL, INVERTER_PORT, MOCK_MODE, MOCK_URL
+from discharge.controller import DischargeController
+from discharge.router import router as discharge_router
+from discharge.store import WindowStore
+from inverter.reader import InverterReader
+from kindle_dashboard.history import HistoryStore
 from kindle_dashboard.router import router as kindle_router
 from routers import dashboard, health
 
@@ -37,48 +28,37 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("pv.api")
 
+# Docker volume in production, the api/ folder in local development
+DATA_DIR = Path("/data") if Path("/data").is_dir() else Path(__file__).parent
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if MOCK_MODE:
-        from mock_session import MockSession
+    # Pushes go to every phone on the topic: a simulated discharge must never reach the real phone
+    if not MOCK_MODE:
+        notifications.init_firebase()
 
-        session = MockSession(mock_url=MOCK_URL)
-        logger.info("Running in MOCK mode, connecting to %s", MOCK_URL)
-    else:
-        from session import SolarSession
-
-        session = SolarSession(
-            username=os.environ["FUSIONSOLAR_USER"],
-            password=os.environ["FUSIONSOLAR_PASS"],
-            subdomain=os.environ.get("HUAWEI_SUBDOMAIN", "uni003eu5"),
-        )
-
-    app.state.session = session
-    app.state.discharge_tasks = {}
-    app.state.discharge_statuses = {}
-    app.state.windows_changed = asyncio.Event()
-
-    notifications.init_firebase()
-
-    from kindle_dashboard.history import HistoryStore
-    from kindle_dashboard.backfill import seed_history
-
-    default_history = Path('/data/history.sqlite3') if Path('/data').is_dir() else Path(__file__).parent / 'history.sqlite3'
-    history = HistoryStore(os.environ.get('HISTORY_DB_PATH', str(default_history)))
+    history = HistoryStore(os.environ.get("HISTORY_DB_PATH", str(DATA_DIR / "history.sqlite3")))
     app.state.history = history
 
     async def record_history(data):
         await asyncio.to_thread(history.record, data)
 
-    # Live readings straight from the inverter; the cloud session is only used for battery control
     if MOCK_MODE:
-        from inverter.mock_reader import MockInverterReader
+        from inverter.simulator import simulator_client_factory
 
-        inverter = MockInverterReader(session, interval=INVERTER_POLL_INTERVAL, on_reading=record_history)
+        logger.info("Running in MOCK mode against the simulator at %s", MOCK_URL)
+        logging.getLogger("httpx").setLevel(logging.WARNING)  # a line per register read otherwise
+        inverter = InverterReader(
+            host=MOCK_URL,
+            port=0,
+            password="mock",
+            interval=INVERTER_POLL_INTERVAL,
+            settle_s=0,
+            client_factory=simulator_client_factory(MOCK_URL),
+            on_reading=record_history,
+        )
     else:
-        from inverter.reader import InverterReader
-
         inverter = InverterReader(
             host=INVERTER_HOST,
             port=INVERTER_PORT,
@@ -87,58 +67,20 @@ async def lifespan(app: FastAPI):
             on_reading=record_history,
         )
     app.state.inverter = inverter
-    inverter_task = asyncio.create_task(inverter.run())
 
-    if not MOCK_MODE:
-        try:
-            await session.call("get_power_status")
-            logger.info("FusionSolar session ready")
-        except Exception as exc:
-            logger.error("Initial connection failed: %s", exc)
+    controller = DischargeController(WindowStore(DATA_DIR / "discharge_windows.json"), inverter)
+    app.state.discharge = controller
 
-    keep_alive_task = None
-    history_seed_task = None
-    if not MOCK_MODE:
-        history_seed_task = asyncio.create_task(seed_history(session, history))
-        async def _keep_alive_loop():
-            while True:
-                await asyncio.sleep(KEEP_ALIVE_INTERVAL)
-                await session.keep_alive()
-                logger.debug("Keep-alive sent")
-
-        keep_alive_task = asyncio.create_task(_keep_alive_loop())
-
-    # Multi-window discharge scheduler
-    scheduler = WindowScheduler(app.state, session, BATTERY_DN)
-    app.state.scheduler = scheduler
-    scheduler_task = asyncio.create_task(scheduler.run())
-
-    # Charge window scheduler
-    app.state.charge_tasks = {}
-    app.state.charge_statuses = {}
-    app.state.charge_windows_changed = asyncio.Event()
-    charge_scheduler = ChargeWindowScheduler(app.state, session, BATTERY_DN)
-    app.state.charge_scheduler = charge_scheduler
-    charge_scheduler_task = asyncio.create_task(charge_scheduler.run())
+    tasks = [asyncio.create_task(inverter.run()), asyncio.create_task(controller.run())]
 
     yield
 
-    scheduler_task.cancel()
-    charge_scheduler_task.cancel()
-    for task in app.state.discharge_tasks.values():
-        if not task.done():
-            task.cancel()
-    for task in app.state.charge_tasks.values():
-        if not task.done():
-            task.cancel()
-    if keep_alive_task:
-        keep_alive_task.cancel()
-    inverter_task.cancel()
-    if history_seed_task:
-        history_seed_task.cancel()
-    await asyncio.gather(inverter_task, *([history_seed_task] if history_seed_task else []), return_exceptions=True)
+    # A discharge in progress is left running: its command carries the window's end, and the next
+    # start applies the rule again
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
     await inverter.stop()
-    await session.shutdown()
     await asyncio.to_thread(history.close)
 
 
@@ -147,11 +89,7 @@ app = FastAPI(title="PV Solar API", lifespan=lifespan)
 app.include_router(health.router)
 app.include_router(dashboard.router)
 app.include_router(kindle_router)
-app.include_router(control_router)   # Static paths first (/status, /{id}/start, /{id}/stop)
-app.include_router(windows_router)    # Dynamic path last (/{window_id} CRUD)
-app.include_router(compat_router)
-app.include_router(charge_control_router)  # Static paths first (/status, /{id}/start, /{id}/stop)
-app.include_router(charge_windows_router)  # Dynamic path last (/{window_id} CRUD)
+app.include_router(discharge_router)
 
 # Mock-only endpoints for virtual clock control
 if MOCK_MODE:
@@ -169,28 +107,24 @@ if MOCK_MODE:
     class AdvanceTimeRequest(BaseModel):
         minutes: int
 
+    async def _clock_moved(t):
+        await app.state.discharge.refresh()
+        return {"time": t.isoformat(), "virtual": mock_clock.is_virtual()}
+
     @mock_router.get("/time")
     async def get_mock_time():
-        return {
-            "time": mock_clock.get_now().isoformat(),
-            "virtual": mock_clock.is_virtual(),
-        }
+        return {"time": mock_clock.get_now().isoformat(), "virtual": mock_clock.is_virtual()}
 
     @mock_router.post("/time")
     async def set_mock_time(body: SetTimeRequest):
-        t = mock_clock.set_time(body.hour, body.minute)
-        app.state.windows_changed.set()
-        return {"time": t.isoformat(), "virtual": True}
+        return await _clock_moved(mock_clock.set_time(body.hour, body.minute))
 
     @mock_router.post("/time/advance")
     async def advance_mock_time(body: AdvanceTimeRequest):
-        t = mock_clock.advance(body.minutes)
-        app.state.windows_changed.set()
-        return {"time": t.isoformat(), "virtual": True}
+        return await _clock_moved(mock_clock.advance(body.minutes))
 
     @mock_router.post("/time/reset")
     async def reset_mock_time():
-        t = mock_clock.reset()
-        return {"time": t.isoformat(), "virtual": False}
+        return await _clock_moved(mock_clock.reset())
 
     app.include_router(mock_router)

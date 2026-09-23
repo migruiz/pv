@@ -33,14 +33,10 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import ovh.tenjo.pv.ChargeWindowsState
 import ovh.tenjo.pv.DashboardState
-import ovh.tenjo.pv.DischargeWindowsState
 import ovh.tenjo.pv.SolarViewModel
-import ovh.tenjo.pv.api.ChargeWindow
-import ovh.tenjo.pv.api.ChargeWindowStatus
+import ovh.tenjo.pv.WindowsState
 import ovh.tenjo.pv.api.DischargeWindow
-import ovh.tenjo.pv.api.DischargeWindowStatus
 import ovh.tenjo.pv.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -48,13 +44,12 @@ import ovh.tenjo.pv.ui.theme.*
 fun DashboardScreen(
     viewModel: SolarViewModel,
     modifier: Modifier = Modifier,
-    onDischargeWindowClick: (String) -> Unit = {},
-    onChargeWindowClick: (String) -> Unit = {},
+    onWindowClick: (String) -> Unit = {},
     onCreateWindow: () -> Unit = {},
 ) {
     val state by viewModel.dashboard.collectAsState()
     val windowsState by viewModel.windows.collectAsState()
-    val chargeWindowsState by viewModel.chargeWindows.collectAsState()
+    val notice by viewModel.notice.collectAsState()
     var showInverterInfo by remember { mutableStateOf(false) }
 
     PullToRefreshBox(
@@ -75,25 +70,27 @@ fun DashboardScreen(
                 Box(Modifier.fillMaxWidth().height(300.dp), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                 }
-            } else if (state.error != null) {
-                ErrorCard(state.error!!) { viewModel.refreshDashboard() }
             } else {
-                // -- Energy Flow --
-                EnergyFlowSection(state, onInverterClick = { showInverterInfo = true })
+                if (state.error != null) {
+                    ErrorCard(state.error!!) { viewModel.refreshDashboard() }
+                } else {
+                    // -- Energy Flow --
+                    EnergyFlowSection(state, onInverterClick = { showInverterInfo = true })
 
-                Spacer(Modifier.height(32.dp))
+                    Spacer(Modifier.height(32.dp))
 
-                // -- Today Stats --
-                StatsRow(state)
+                    // -- Today Stats --
+                    StatsRow(state)
+                }
 
                 Spacer(Modifier.height(24.dp))
 
-                // -- Windows (unified list) --
-                WindowsList(
-                    dischargeState = windowsState,
-                    chargeState = chargeWindowsState,
-                    onDischargeWindowClick = onDischargeWindowClick,
-                    onChargeWindowClick = onChargeWindowClick,
+                // -- Discharge windows: usable even without inverter readings --
+                DischargeWindowsList(
+                    state = windowsState,
+                    notice = notice,
+                    onDismissNotice = { viewModel.dismissNotice() },
+                    onWindowClick = onWindowClick,
                     onCreateWindow = onCreateWindow,
                 )
             }
@@ -576,33 +573,17 @@ private fun InverterInfoRow(label: String, value: String, valueColor: Color) {
 }
 
 // ------------------------------------------------------------------
-// Unified Windows list (charge + discharge)
+// Discharge windows list
 // ------------------------------------------------------------------
 
-private sealed class WindowItem(val startMinutes: Int) {
-    class Discharge(val window: DischargeWindow, val status: DischargeWindowStatus?) :
-        WindowItem(parseTimeToMinutes(window.startTime))
-    class Charge(val window: ChargeWindow, val status: ChargeWindowStatus?) :
-        WindowItem(parseTimeToMinutes(window.startTime))
-}
-
 @Composable
-private fun WindowsList(
-    dischargeState: DischargeWindowsState,
-    chargeState: ChargeWindowsState,
-    onDischargeWindowClick: (String) -> Unit,
-    onChargeWindowClick: (String) -> Unit,
+private fun DischargeWindowsList(
+    state: WindowsState,
+    notice: String?,
+    onDismissNotice: () -> Unit,
+    onWindowClick: (String) -> Unit,
     onCreateWindow: () -> Unit,
 ) {
-    val items = buildList {
-        dischargeState.windows.forEach { w ->
-            add(WindowItem.Discharge(w, dischargeState.statuses[w.id]))
-        }
-        chargeState.windows.forEach { w ->
-            add(WindowItem.Charge(w, chargeState.statuses[w.id]))
-        }
-    }.sortedBy { it.startMinutes }
-
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(
             Modifier.fillMaxWidth(),
@@ -617,21 +598,42 @@ private fun WindowsList(
                     modifier = Modifier.size(20.dp),
                 )
                 Spacer(Modifier.width(8.dp))
-                Text("Windows", style = MaterialTheme.typography.titleMedium)
+                Text("Discharge windows", style = MaterialTheme.typography.titleMedium)
             }
             IconButton(onClick = onCreateWindow, modifier = Modifier.size(32.dp)) {
                 Icon(Icons.Default.Add, contentDescription = "Add window", tint = EnergyOrange)
             }
         }
 
-        if (items.isEmpty() && !dischargeState.isLoading && !chargeState.isLoading) {
+        if (notice != null) {
+            Surface(
+                onClick = onDismissNotice,
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.errorContainer,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    "$notice (tap to dismiss)",
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
+        }
+
+        val message = when {
+            state.error != null && !state.loaded -> "Could not load the windows: ${state.error}"
+            state.loaded && state.windows.isEmpty() -> "No discharge windows"
+            else -> null
+        }
+        if (message != null) {
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = SurfaceContainer,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
-                    "No windows configured",
+                    message,
                     modifier = Modifier.padding(16.dp),
                     style = MaterialTheme.typography.bodyMedium,
                     color = OnSurfaceVariant,
@@ -639,164 +641,18 @@ private fun WindowsList(
             }
         }
 
-        items.forEach { item ->
-            when (item) {
-                is WindowItem.Discharge -> DischargeWindowCard(item.window, item.status, onDischargeWindowClick)
-                is WindowItem.Charge -> ChargeWindowCard(item.window, item.status, onChargeWindowClick)
-            }
-        }
-    }
-}
-
-@Composable
-private fun ChargeWindowCard(
-    window: ChargeWindow,
-    status: ChargeWindowStatus?,
-    onClick: (String) -> Unit,
-) {
-    val isActive = status != null && status.active
-    val alpha = if (window.enabled) 1f else 0.5f
-
-    val borderAlpha = if (isActive) {
-        val infiniteTransition = rememberInfiniteTransition(label = "charge-border")
-        infiniteTransition.animateFloat(
-            initialValue = 0.3f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(
-                tween(1200, easing = FastOutSlowInEasing),
-                RepeatMode.Reverse,
-            ),
-            label = "charge-pulse",
-        ).value
-    } else 0f
-
-    Surface(
-        onClick = { onClick(window.id) },
-        shape = RoundedCornerShape(12.dp),
-        color = SurfaceContainer,
-        border = if (isActive) BorderStroke(1.5.dp, EnergyOrange.copy(alpha = borderAlpha)) else null,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(14.dp)) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Default.BatteryChargingFull,
-                        contentDescription = null,
-                        tint = (if (isActive) EnergyOrange else BatteryGreen).copy(alpha = alpha),
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        window.name,
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
-                    )
-                }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    if (window.notify) {
-                        Icon(
-                            Icons.Default.Notifications,
-                            contentDescription = "Notifications enabled",
-                            tint = OnSurfaceVariant.copy(alpha = alpha),
-                            modifier = Modifier.size(14.dp),
-                        )
-                    }
-                    val statusColor = if (window.enabled) BatteryGreen else ErrorRed
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Canvas(modifier = Modifier.size(8.dp)) {
-                            drawCircle(color = statusColor)
-                        }
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            if (window.enabled) "Enabled" else "Disabled",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = statusColor.copy(alpha = alpha),
-                        )
-                    }
-                    if (isActive) {
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = EnergyOrange.copy(alpha = 0.15f),
-                        ) {
-                            Text(
-                                "ACTIVE",
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                color = EnergyOrange,
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(6.dp))
-
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(
-                    "${window.startTime} \u2192 ${window.peakTime} \u2192 ${window.endTime}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = OnSurfaceVariant.copy(alpha = alpha),
-                )
-                Text(
-                    "${window.startPower}W \u2192 ${window.peakPower}W \u2192 ${window.endPower}W",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = OnSurfaceVariant.copy(alpha = alpha),
-                )
-            }
-
-            if (isActive && status != null) {
-                Spacer(Modifier.height(6.dp))
-
-                LinearProgressIndicator(
-                    progress = { (status.progress ?: 0.0).toFloat() },
-                    modifier = Modifier.fillMaxWidth().height(4.dp),
-                    color = EnergyOrange,
-                    trackColor = OnSurfaceVariant.copy(alpha = 0.2f),
-                )
-
-                Spacer(Modifier.height(6.dp))
-
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(
-                        "${status.currentPowerW ?: 0}W",
-                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                        color = EnergyOrange,
-                    )
-                    val mins = status.minutesRemaining ?: 0.0
-                    val hours = (mins / 60).toInt()
-                    val m = (mins % 60).toInt()
-                    Text(
-                        "${hours}h ${m}m remaining",
-                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                        color = EnergyOrange,
-                    )
-                }
-            }
-        }
+        // The API sends them sorted by start time
+        state.windows.forEach { window -> DischargeWindowCard(window, onWindowClick) }
     }
 }
 
 @Composable
 private fun DischargeWindowCard(
     window: DischargeWindow,
-    status: DischargeWindowStatus?,
     onClick: (String) -> Unit,
 ) {
-    val isActive = status != null && status.active
+    val status = window.state
+    val isActive = status.discharging
     val alpha = if (window.enabled) 1f else 0.5f
 
     val borderAlpha = if (isActive) {
@@ -864,16 +720,17 @@ private fun DischargeWindowCard(
                             color = statusColor.copy(alpha = alpha),
                         )
                     }
-                    if (isActive) {
+                    if (isActive || status.targetReached) {
+                        val badgeColor = if (isActive) EnergyOrange else BatteryGreen
                         Surface(
                             shape = RoundedCornerShape(6.dp),
-                            color = EnergyOrange.copy(alpha = 0.15f),
+                            color = badgeColor.copy(alpha = 0.15f),
                         ) {
                             Text(
-                                "ACTIVE",
+                                if (isActive) "ACTIVE" else "TARGET REACHED",
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                color = EnergyOrange,
+                                color = badgeColor,
                             )
                         }
                     }
@@ -909,7 +766,7 @@ private fun DischargeWindowCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text(
-                        "%.2f kW".format(status.dischargePowerKw ?: 0.0),
+                        "%.2f kW".format(status.powerKw ?: 0.0),
                         style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
                         color = EnergyOrange,
                     )

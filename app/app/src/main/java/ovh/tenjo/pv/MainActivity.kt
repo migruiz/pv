@@ -13,6 +13,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -21,11 +23,16 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModelProvider
 import com.google.firebase.messaging.FirebaseMessaging
 import ovh.tenjo.pv.api.SolarApiClient
-import ovh.tenjo.pv.ui.ChargeWindowDetailScreen
-import ovh.tenjo.pv.ui.CreateWindowDialog
 import ovh.tenjo.pv.ui.DashboardScreen
-import ovh.tenjo.pv.ui.DischargeWindowDetailScreen
+import ovh.tenjo.pv.ui.DischargeWindowScreen
 import ovh.tenjo.pv.ui.theme.PVManagerTheme
+
+private sealed interface Screen {
+    data object Dashboard : Screen
+
+    /** The window screen: an existing window, or a new one when id is null. */
+    data class Window(val id: String?) : Screen
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -58,48 +65,39 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             PVManagerTheme {
-                var selectedDischargeWindowId by remember { mutableStateOf<String?>(null) }
-                var selectedChargeWindowId by remember { mutableStateOf<String?>(null) }
-                var showCreateDialog by remember { mutableStateOf(false) }
+                var screen by remember { mutableStateOf<Screen>(Screen.Dashboard) }
+                val windows by solarViewModel.windows.collectAsState()
 
-                BackHandler(enabled = selectedChargeWindowId != null || selectedDischargeWindowId != null) {
-                    if (selectedChargeWindowId != null) selectedChargeWindowId = null
-                    else selectedDischargeWindowId = null
+                // A lost "stopped" push would leave the discharging notification up for good. Only a
+                // successful, fresh list can say nothing is discharging: never a cached one after a failure.
+                LaunchedEffect(windows.fetchedAt) {
+                    if (windows.fetchedAt > 0 && windows.windows.none { it.state.discharging }) {
+                        AutoDischargeService.stopIfStale(this@MainActivity, windows.fetchedAt)
+                    }
+                }
+
+                BackHandler(enabled = screen != Screen.Dashboard) {
+                    screen = Screen.Dashboard
                 }
 
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    if (selectedChargeWindowId != null) {
-                        ChargeWindowDetailScreen(
-                            windowId = selectedChargeWindowId!!,
+                    when (val current = screen) {
+                        is Screen.Window -> DischargeWindowScreen(
+                            windowId = current.id,
                             viewModel = solarViewModel,
-                            onBack = { selectedChargeWindowId = null },
+                            onBack = { screen = Screen.Dashboard },
                         )
-                    } else if (selectedDischargeWindowId != null) {
-                        DischargeWindowDetailScreen(
-                            windowId = selectedDischargeWindowId!!,
-                            viewModel = solarViewModel,
-                            onBack = { selectedDischargeWindowId = null },
-                        )
-                    } else {
-                        DashboardScreen(
+                        Screen.Dashboard -> DashboardScreen(
                             viewModel = solarViewModel,
                             modifier = Modifier.padding(innerPadding),
-                            onDischargeWindowClick = {
-                                solarViewModel.clearDetailMessage()
-                                selectedDischargeWindowId = it
+                            onWindowClick = {
+                                solarViewModel.resetEditor()
+                                screen = Screen.Window(it)
                             },
-                            onChargeWindowClick = {
-                                solarViewModel.clearChargeWindowDetailMessage()
-                                selectedChargeWindowId = it
+                            onCreateWindow = {
+                                solarViewModel.resetEditor()
+                                screen = Screen.Window(null)
                             },
-                            onCreateWindow = { showCreateDialog = true },
-                        )
-                    }
-
-                    if (showCreateDialog) {
-                        CreateWindowDialog(
-                            viewModel = solarViewModel,
-                            onDismiss = { showCreateDialog = false },
                         )
                     }
                 }

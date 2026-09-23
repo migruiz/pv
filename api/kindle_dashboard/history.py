@@ -9,6 +9,7 @@ from pathlib import Path
 FIELDS = ("pv_kw", "home_kw", "battery_soc")
 WINDOW_SECONDS = 12 * 3600
 RETENTION_SECONDS = 30 * 86400
+MAX_GAP_SECONDS = 90  # a longer pause between readings is drawn as a gap
 
 
 def finite(value):
@@ -34,7 +35,6 @@ class HistoryStore:
                 pv_sum REAL, home_sum REAL, battery_soc REAL,
                 sample_count INTEGER NOT NULL, source TEXT NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         """)
 
     def close(self):
@@ -44,8 +44,7 @@ class HistoryStore:
     def record(self, data):
         """Average every successful poll's power; keep the latest minute SOC.
 
-        Duplicate/out-of-order reads do not count twice. A local reading takes
-        precedence over a cloud seed in the same minute.
+        Duplicate/out-of-order reads do not count twice.
         """
         stamp = datetime.fromisoformat(data["updated_at"]).timestamp()
         values = [finite(data.get(key)) for key in FIELDS]
@@ -54,9 +53,9 @@ class HistoryStore:
         pv, home, soc = values
         minute = int(stamp // 60)
         with self._lock, self._db:
-            old = self._db.execute("SELECT observed_at,pv_sum,home_sum,sample_count,source FROM samples WHERE minute=?", (minute,)).fetchone()
+            old = self._db.execute("SELECT observed_at,pv_sum,home_sum,sample_count FROM samples WHERE minute=?", (minute,)).fetchone()
             count = 1
-            if old and old[4] == "inverter":
+            if old:
                 if stamp <= old[0]:
                     return
                 pv += old[1]
@@ -69,33 +68,17 @@ class HistoryStore:
                 self._last_prune = stamp
             self.revision += 1
 
-    def seeded(self):
-        with self._lock:
-            return self._db.execute("SELECT 1 FROM metadata WHERE key='cloud_seed_completed'").fetchone() is not None
-
-    def seed(self, samples, completed_at):
-        """Import cloud rows once, without replacing locally collected minutes."""
-        with self._lock, self._db:
-            for sample in samples:
-                stamp = sample["timestamp"]
-                pv, home, soc = [finite(sample.get(key)) for key in FIELDS]
-                self._db.execute("INSERT OR IGNORE INTO samples VALUES (?,?,?,?,?,?,?)",
-                                 (int(stamp // 60), stamp, pv, home, soc, 1, "cloud"))
-            self._db.execute("INSERT OR REPLACE INTO metadata VALUES ('cloud_seed_completed',?)", (completed_at.isoformat(),))
-            self.revision += 1
-
     def chart(self, end, current):
         """Return values and true X positions in [now-12h, now], with gaps.
 
-        Connect adjacent cloud samples up to five minutes apart. Break longer
-        gaps, and break local-only gaps longer than 90 seconds. The current
-        reading anchors the right edge without requiring another inverter read.
+        Break gaps longer than 90 seconds. The current reading anchors the
+        right edge without requiring another inverter read.
         """
         end_ts = end.timestamp()
         start = end_ts - WINDOW_SECONDS
         with self._lock:
             records = self._db.execute(
-                "SELECT observed_at,pv_sum/sample_count,home_sum/sample_count,battery_soc,source "
+                "SELECT observed_at,pv_sum/sample_count,home_sum/sample_count,battery_soc "
                 "FROM samples WHERE minute BETWEEN ? AND ? ORDER BY minute",
                 (int(start // 60), int(end_ts // 60))).fetchall()
         records = [row for row in records if start <= row[0] <= end_ts]
@@ -103,14 +86,13 @@ class HistoryStore:
         if all(value is not None for value in latest):
             if records and records[-1][0] == end_ts:
                 records.pop()
-            records.append((end_ts, *latest, "inverter"))
+            records.append((end_ts, *latest))
         history = {key: [] for key in FIELDS}
         positions = []
         previous = None
         for row in records:
             if previous:
-                max_gap = 330 if "cloud" in (previous[4], row[4]) else 90
-                if row[0] - previous[0] > max_gap:
+                if row[0] - previous[0] > MAX_GAP_SECONDS:
                     positions.append(((previous[0] + row[0]) / 2 - start) / WINDOW_SECONDS)
                     for samples in history.values():
                         samples.append(None)
@@ -123,6 +105,4 @@ class HistoryStore:
     def status(self):
         with self._lock:
             count, first, last = self._db.execute("SELECT count(*),min(observed_at),max(observed_at) FROM samples").fetchone()
-            sources = dict(self._db.execute("SELECT source,count(*) FROM samples GROUP BY source"))
-        return {"minutes": count, "first_timestamp": first, "last_timestamp": last,
-                "sources": sources, "cloud_seed_completed": self.seeded()}
+        return {"minutes": count, "first_timestamp": first, "last_timestamp": last}

@@ -14,7 +14,7 @@ WORKDIR /app
 RUN groupadd --gid 1000 app \
  && useradd  --uid 1000 --gid app --shell /bin/sh --create-home app
 
-# Persistent data directory for cookies + firebase SA key
+# Persistent data directory: windows, chart history, firebase SA key
 RUN mkdir -p /data && chown app:app /data
 
 # --- Dependency layer (cached unless pyproject.toml/uv.lock change) ---
@@ -22,17 +22,12 @@ COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 # --- Application layer ---
-COPY main.py auth.py session.py mock_session.py config.py dependencies.py notifications.py mock_clock.py ./
+COPY main.py auth.py config.py dependencies.py notifications.py mock_clock.py ./
 COPY discharge/ discharge/
-COPY charge_windows/ charge_windows/
 COPY routers/ routers/
 COPY kindle_dashboard/ kindle_dashboard/
 COPY inverter/ inverter/
 RUN uv sync --frozen --no-dev
-
-# Symlink cookies to persistent volume so session.py's
-# Path(__file__).parent / "cookies.json" writes to /data
-RUN ln -sf /data/cookies.json /app/cookies.json
 
 USER app
 

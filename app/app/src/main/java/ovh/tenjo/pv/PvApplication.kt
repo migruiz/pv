@@ -7,7 +7,6 @@ import android.app.NotificationManager
 class PvApplication : Application() {
     companion object {
         const val CHANNEL_AUTO_DISCHARGE = "auto_discharge"
-        const val CHANNEL_CHARGE_WINDOW = "charge_window"
     }
 
     override fun onCreate() {
@@ -22,14 +21,7 @@ class PvApplication : Application() {
                 description = "Auto-discharge status notifications"
             },
         )
-        nm.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL_CHARGE_WINDOW,
-                "Charge Window",
-                NotificationManager.IMPORTANCE_HIGH,
-            ).apply {
-                description = "Charge window status notifications"
-            },
-        )
+        // Charge windows are gone: remove their channel from the phone's notification settings
+        nm.deleteNotificationChannel("charge_window")
     }
 }
