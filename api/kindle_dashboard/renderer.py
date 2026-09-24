@@ -87,7 +87,7 @@ def draw_bolt(draw, center):
     draw.polygon(points, fill="black")
 
 
-def draw_battery(draw, box, soc, history: Sequence[float | None] = (), positions=None):
+def draw_battery(draw, box, soc, history: Sequence[float | None] = (), positions=None, target: int | None = None):
     x1, y1, x2, y2 = box
     draw.rounded_rectangle(box, radius=13, outline="black", width=7)
     terminal_width = 18
@@ -110,6 +110,8 @@ def draw_battery(draw, box, soc, history: Sequence[float | None] = (), positions
             for i, sample in enumerate(samples)
         ]
         draw_battery_trace(draw, (inner_left, inner_top, inner_right, inner_bottom), fill_width, points)
+    if target:
+        draw_target_line(draw, (inner_left, inner_top, inner_right, inner_bottom), fill_width, target)
 
 
 def draw_trace_segments(draw, points, **kwargs):
@@ -127,19 +129,52 @@ def draw_trace_segments(draw, points, **kwargs):
 def draw_battery_trace(draw, box, fill_width, points):
     """Clip the trace to the battery interior and invert it over the charge fill."""
     left, top, right, bottom = box
-    width, height = right - left + 1, bottom - top + 1
-    trace = Image.new("1", (width, height), 0)
+    trace = Image.new("1", (right - left + 1, bottom - top + 1), 0)
     draw_trace_segments(ImageDraw.Draw(trace), points, fill=1, width=3, joint="curve")
+    draw_inverted(draw, (left, top), trace, fill_width)
+
+
+def draw_inverted(draw, origin, mask, fill_width):
+    """Draw a mask of the battery interior white over the charge fill and black beyond it."""
+    left, top = origin
+    width, height = mask.size
     # The fill rectangle includes its right edge. At 0% there is no fill.
     split = min(width, fill_width + 1) if fill_width > 0 else 0
     if split:
-        draw.bitmap((left, top), trace.crop((0, 0, split, height)), fill="white")
+        draw.bitmap((left, top), mask.crop((0, 0, split, height)), fill="white")
     if split < width:
-        draw.bitmap((left + split, top), trace.crop((split, 0, width, height)), fill="black")
+        draw.bitmap((left + split, top), mask.crop((split, 0, width, height)), fill="black")
 
 
-def draw_battery_badge(draw, box, charging: bool):
-    """Borderless state icons above or below the terminal, outside the battery."""
+def draw_target_line(draw, box, fill_width, target):
+    """The daytime target: a dashed vertical line where the charge fill reaches at that %, its value below.
+
+    Inverted over the fill like the history trace. The value sits at the foot of the line, inside the
+    battery, in a white box like the chart scale labels.
+    """
+    left, top, right, bottom = box
+    label, face = f"{target}%", font(17)
+    ll, lt, lr, lb = draw.textbbox((0, 0), label, font=face, anchor="lt")
+    label_top = bottom - (lb - lt) - 4
+    x = round((right - left) * max(0, min(100, target)) / 100)
+    line = Image.new("1", (right - left + 1, bottom - top + 1), 0)
+    for y in range(0, label_top - top - 6, 14):
+        ImageDraw.Draw(line).line((x, y, x, min(y + 8, label_top - top - 6)), fill=1, width=3)
+    draw_inverted(draw, (left, top), line, fill_width)
+
+    # Centered under the line, kept inside the battery near either end
+    label_left = min(max(left + x - (lr - ll) / 2, left + 4), right - 4 - (lr - ll))
+    bounds = draw.textbbox((label_left, label_top), label, font=face, anchor="lt")
+    draw.rectangle((bounds[0] - 2, bounds[1] - 2, bounds[2] + 2, bounds[3] + 2), fill="white")
+    draw.text((label_left, label_top), label, font=face, anchor="lt", fill="black")
+
+
+def draw_battery_badge(draw, box, charging: bool, power_kw: float):
+    """Borderless state icons above or below the terminal, outside the battery, with the battery power.
+
+    The power goes on the far side of the icon from the terminal: above the charging bolt, below the
+    discharging arrow, in the same small type as the grid export under the pylon.
+    """
     _, top, right, bottom = box
     cx, cy = right + 32, top + 18 if charging else bottom - 18
     if charging:
@@ -149,6 +184,8 @@ def draw_battery_badge(draw, box, charging: bool):
         shape = [(0, 22), (-18, 2), (-7, 2), (-7, -22),
                  (7, -22), (7, 2), (18, 2)]
     draw.polygon([(cx + round(x * 0.75), cy + round(y * 0.75)) for x, y in shape], fill="black")
+    # A little left of the icon's center, clear of the column divider
+    centered(draw, (cx - 4, cy - 36 if charging else cy + 36), f"{power_kw:.1f}k", font(20))
 
 
 def draw_empty_battery(draw, box):
@@ -243,13 +280,15 @@ def draw_history_hours(draw, left, right, baseline, updated_at):
 
 
 def render(data: dict, updated_at: datetime, stale: bool = False, *,
-           history: dict[str, Sequence[float | None]] | None = None, history_positions=None) -> Image.Image:
+           history: dict[str, Sequence[float | None]] | None = None, history_positions=None,
+           daytime_target: int = 0) -> Image.Image:
     """Draw the dashboard; every history spans now − HISTORY_HOURS through now.
 
     Samples are ordered oldest to newest; None is a gap. Optional positions
     give true fractions of the 12-hour window for unevenly spaced history.
     Without positions samples are evenly spaced. `updated_at`
     is shown as-is in the legacy layout, so pass a Dublin-local time.
+    A daytime target of 1-100% is marked on the battery; 0 is off.
     """
     image = Image.new("1", (WIDTH, HEIGHT), 1)
     draw = ImageDraw.Draw(image)
@@ -319,11 +358,13 @@ def render(data: dict, updated_at: datetime, stale: bool = False, *,
         margin = 70
         battery_box = (44, round(soc_baseline + margin), 431,
                        round(time_baseline - (time_bottom - time_top) - margin))
-    draw_battery(draw, battery_box, soc, history.get("battery_soc", ()) if chart_layout else (), positions=history_positions)
+    target = daytime_target if chart_layout and 0 < daytime_target <= 100 else None
+    draw_battery(draw, battery_box, soc, history.get("battery_soc", ()) if chart_layout else (), positions=history_positions,
+                 target=target)
     if chart_layout:
         charging = data.get("battery_charging")
         if value(data, "battery_charge_discharge_kw") >= FLOW_ICON_MIN_KW and isinstance(charging, bool):
-            draw_battery_badge(draw, battery_box, charging)
+            draw_battery_badge(draw, battery_box, charging, value(data, "battery_charge_discharge_kw"))
         draw_history_hours(draw, battery_box[0] + 12, battery_box[2] - 12, battery_box[3], updated_at)
     reading_with_symbols(draw, (250, time_baseline), time_text, time_font,
                          before=None if chart_layout else ("↓", font(38)), after=(time_suffix, font(38)))
@@ -344,7 +385,9 @@ def render(data: dict, updated_at: datetime, stale: bool = False, *,
 
 
 def render_png(data: dict, updated_at: datetime, stale: bool = False, *,
-               history: dict[str, Sequence[float | None]] | None = None, history_positions=None) -> bytes:
+               history: dict[str, Sequence[float | None]] | None = None, history_positions=None,
+               daytime_target: int = 0) -> bytes:
     output = io.BytesIO()
-    render(data, updated_at, stale, history=history, history_positions=history_positions).save(output, format="PNG", optimize=True)
+    render(data, updated_at, stale, history=history, history_positions=history_positions,
+           daytime_target=daytime_target).save(output, format="PNG", optimize=True)
     return output.getvalue()

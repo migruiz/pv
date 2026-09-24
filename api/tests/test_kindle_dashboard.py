@@ -105,6 +105,31 @@ class TestRenderer:
         assert image.getpixel((50, 10)) == 0
         assert image.getpixel((90, 10)) == 1
 
+    def test_battery_power_is_written_by_its_icon(self):
+        history = {"battery_soc": [60, 73]}
+        now = mock_clock.get_now()
+        charging = {**SAMPLE, "battery_charge_discharge_kw": 2.5}
+        assert (renderer.render_png(charging, now, history=history)
+                != renderer.render_png({**charging, "battery_charge_discharge_kw": 1.2}, now, history=history))
+
+    def test_daytime_target_is_marked_on_the_battery(self):
+        history = {"battery_soc": [60, 73]}
+        now = mock_clock.get_now()
+        plain = renderer.render_png(SAMPLE, now, history=history)
+        assert renderer.render_png(SAMPLE, now, history=history, daytime_target=0) == plain  # off: no mark
+        assert renderer.render_png(SAMPLE, now, history=history, daytime_target=80) != plain
+        assert (renderer.render_png(SAMPLE, now, history=history, daytime_target=80)
+                != renderer.render_png(SAMPLE, now, history=history, daytime_target=100))
+
+    def test_target_line_is_inverted_over_the_charge_fill(self):
+        image = Image.new("1", (120, 60), 1)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0, 0, 60, 59), fill=0)  # the fill, up to 50%
+        renderer.draw_target_line(draw, (0, 0, 119, 59), 60, 25)  # inside the fill
+        renderer.draw_target_line(draw, (0, 0, 119, 59), 60, 75)  # beyond it
+        assert image.getpixel((30, 2)) == 255  # white dash on black
+        assert image.getpixel((89, 2)) == 0  # black dash on white
+
     def test_captured_chart_layout_accepts_missing_slots(self):
         history = {"pv_kw": [None, 0, 6, None, 2.517],
                    "home_kw": [None, 0.2, None, 4, 0.279],
@@ -157,6 +182,23 @@ class TestDashboardPng:
         await ac.get('/dashboard.png', headers=HEADERS)
         assert captured['history']['battery_soc'] == [73]
         assert captured['history_positions'] == [1]
+
+    async def test_marks_the_saved_daytime_target_and_redraws_when_it_changes(self, client, monkeypatch, tmp_path):
+        from types import SimpleNamespace
+
+        from daytime_target.store import TargetStore
+
+        ac, _ = client
+        captured = []
+        monkeypatch.setattr(kindle_module, "render_png",
+                            lambda *args, **kwargs: captured.append(kwargs["daytime_target"]) or b"png")
+        store = TargetStore(tmp_path / "target.json")
+        ac._transport.app.state.daytime_target = SimpleNamespace(store=store)
+
+        await ac.get("/dashboard.png", headers=HEADERS)
+        store.save(80)
+        await ac.get("/dashboard.png", headers=HEADERS)  # same reading, new target
+        assert captured == [0, 80]
 
     async def test_returns_uncached_kindle_png(self, client):
         ac, _ = client

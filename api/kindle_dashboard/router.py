@@ -25,6 +25,16 @@ _last_good: tuple[dict, datetime] | None = None
 _cached: tuple[tuple, bytes] | None = None
 
 
+def _daytime_target(request: Request) -> int:
+    """The saved daytime target, marked on the battery. 0 (no mark) when there is none or it cannot be read:
+    the target's own controller already reports an unreadable file."""
+    controller = getattr(request.app.state, "daytime_target", None)
+    try:
+        return controller.store.load() if controller is not None else 0
+    except Exception:
+        return 0
+
+
 def _reading_time(data: dict) -> datetime:
     """When the inverter was read, in Dublin time (the renderer prints it as-is)."""
     try:
@@ -47,7 +57,8 @@ async def get_dashboard_png(request: Request, inverter=Depends(get_inverter)):
         (data, updated_at), stale = _last_good or ({}, mock_clock.get_now()), True
 
     store = getattr(request.app.state, 'history', None)
-    key = (updated_at, stale, store.revision if store else 0)
+    target = _daytime_target(request)
+    key = (updated_at, stale, store.revision if store else 0, target)
     if _cached is None or _cached[0] != key:
         try:
             history, positions = await asyncio.to_thread(store.chart, updated_at, data) if store else ({}, [])
@@ -55,5 +66,6 @@ async def get_dashboard_png(request: Request, inverter=Depends(get_inverter)):
             logger.exception("Could not read chart history; rendering current readings")
             history, positions = {}, []
         _cached = (key, await asyncio.to_thread(render_png, data, updated_at, stale,
-                                               history=history, history_positions=positions))
+                                               history=history, history_positions=positions,
+                                               daytime_target=target))
     return Response(_cached[1], media_type="image/png", headers={"Cache-Control": "no-store"})
