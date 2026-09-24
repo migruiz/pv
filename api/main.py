@@ -1,5 +1,6 @@
 """
-PV Solar API: live readings from the Huawei inverter over its WiFi hotspot, and discharge windows.
+PV Solar API: live readings from the Huawei inverter over its WiFi hotspot, discharge windows, and the
+daytime battery target.
 
 Run with:  uvicorn main:app --reload
 """
@@ -15,6 +16,9 @@ from fastapi import FastAPI
 
 import notifications
 from config import INVERTER_HOST, INVERTER_POLL_INTERVAL, INVERTER_PORT, MOCK_MODE, MOCK_URL
+from daytime_target.controller import DaytimeTargetController
+from daytime_target.router import router as daytime_target_router
+from daytime_target.store import TargetStore
 from discharge.controller import DischargeController
 from discharge.router import router as discharge_router
 from discharge.store import WindowStore
@@ -68,10 +72,13 @@ async def lifespan(app: FastAPI):
         )
     app.state.inverter = inverter
 
-    controller = DischargeController(WindowStore(DATA_DIR / "discharge_windows.json"), inverter)
+    windows = WindowStore(DATA_DIR / "discharge_windows.json")
+    controller = DischargeController(windows, inverter)
     app.state.discharge = controller
+    daytime_target = DaytimeTargetController(TargetStore(DATA_DIR / "daytime_target.json"), windows, inverter)
+    app.state.daytime_target = daytime_target
 
-    tasks = [asyncio.create_task(inverter.run()), asyncio.create_task(controller.run())]
+    tasks = [asyncio.create_task(task.run()) for task in (inverter, controller, daytime_target)]
 
     yield
 
@@ -90,6 +97,7 @@ app.include_router(health.router)
 app.include_router(dashboard.router)
 app.include_router(kindle_router)
 app.include_router(discharge_router)
+app.include_router(daytime_target_router)
 
 # Mock-only endpoints for virtual clock control
 if MOCK_MODE:
@@ -109,6 +117,7 @@ if MOCK_MODE:
 
     async def _clock_moved(t):
         await app.state.discharge.refresh()
+        await app.state.daytime_target.check()  # the night charge's TOU check depends on the time
         return {"time": t.isoformat(), "virtual": mock_clock.is_virtual()}
 
     @mock_router.get("/time")

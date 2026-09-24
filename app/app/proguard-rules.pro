@@ -19,3 +19,6 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+# Gson fills the API models by reflection, and Retrofit reads the service's generic return types
+-keep class ovh.tenjo.pv.api.** { *; }
+-keepattributes Signature, *Annotation*, InnerClasses, EnclosingMethod

@@ -16,6 +16,7 @@ SLOW_REGISTERS = [
     "storage_working_mode_settings",      # same codes as FusionSolar signal 230320241 (2, 4, 5)
     "storage_charge_from_grid_function",  # FusionSolar signal 230320279
     "storage_maximum_charging_power",     # W, FusionSolar signal 10011
+    "storage_excess_pv_energy_use_in_tou",  # TOU mode's spare solar: 0 = fed to grid, 1 = charge the battery
     "accumulated_yield_energy",           # kWh
 ]
 
@@ -24,6 +25,7 @@ SLOW_DEFAULTS = {
     "storage_working_mode_settings": 5,
     "storage_charge_from_grid_function": 1,
     "storage_maximum_charging_power": 2500,
+    "storage_excess_pv_energy_use_in_tou": 0,
     "accumulated_yield_energy": 0.0,
 }
 
@@ -57,4 +59,5 @@ def to_dashboard(values: dict) -> dict:
         "operation_mode": int(_number(v["storage_working_mode_settings"])),
         "charge_from_ac": int(_number(v["storage_charge_from_grid_function"])),
         "max_charge_power": int(_number(v["storage_maximum_charging_power"])),
+        "spare_solar_to_battery": _number(v["storage_excess_pv_energy_use_in_tou"]) == 1,
     }

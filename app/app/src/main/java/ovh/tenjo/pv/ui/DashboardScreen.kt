@@ -35,9 +35,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import ovh.tenjo.pv.DashboardState
 import ovh.tenjo.pv.SolarViewModel
+import ovh.tenjo.pv.TargetState
 import ovh.tenjo.pv.WindowsState
+import ovh.tenjo.pv.api.DaytimeTarget
 import ovh.tenjo.pv.api.DischargeWindow
 import ovh.tenjo.pv.ui.theme.*
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,6 +52,7 @@ fun DashboardScreen(
 ) {
     val state by viewModel.dashboard.collectAsState()
     val windowsState by viewModel.windows.collectAsState()
+    val targetState by viewModel.target.collectAsState()
     val notice by viewModel.notice.collectAsState()
     var showInverterInfo by remember { mutableStateOf(false) }
 
@@ -82,6 +86,11 @@ fun DashboardScreen(
                     // -- Today Stats --
                     StatsRow(state)
                 }
+
+                Spacer(Modifier.height(24.dp))
+
+                // -- Daytime battery target: like the windows, usable without inverter readings --
+                DaytimeTargetSection(targetState, state, onSave = { viewModel.saveTarget(it) })
 
                 Spacer(Modifier.height(24.dp))
 
@@ -569,6 +578,136 @@ private fun InverterInfoRow(label: String, value: String, valueColor: Color) {
             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
             color = valueColor,
         )
+    }
+}
+
+// ------------------------------------------------------------------
+// Daytime battery target
+// ------------------------------------------------------------------
+
+@Composable
+private fun DaytimeTargetSection(state: TargetState, dashboard: DashboardState, onSave: (Int) -> Unit) {
+    // The slider only picks a value: nothing is sent until Save, so a slip of the finger changes nothing
+    var draft by remember { mutableStateOf<Int?>(null) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Default.BatteryChargingFull,
+                contentDescription = null,
+                tint = BatteryGreen,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text("Daytime battery target", style = MaterialTheme.typography.titleMedium)
+        }
+
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = SurfaceContainer,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            val target = state.target
+            if (target == null) {
+                Text(
+                    state.error?.let { "Could not load the target: $it" } ?: "Loading…",
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = OnSurfaceVariant,
+                )
+            } else {
+                Column(Modifier.padding(14.dp)) {
+                    val pending = draft?.takeIf { it != target.targetSoc }
+                    val shown = pending ?: target.targetSoc
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            if (shown == 0) "Off" else "$shown%",
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                            color = if (shown == 0) OnSurfaceVariant else BatteryGreen,
+                        )
+                        if (state.isSaving) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = BatteryGreen,
+                            )
+                        }
+                    }
+                    Slider(
+                        value = shown.toFloat(),
+                        onValueChange = { draft = it.roundToInt() },
+                        valueRange = 0f..100f,
+                        steps = 19, // 5% steps
+                        enabled = !state.isSaving,
+                        colors = SliderDefaults.colors(thumbColor = BatteryGreen, activeTrackColor = BatteryGreen),
+                    )
+                    if (pending != null) {
+                        Text(
+                            "Not saved: the target is still ${target.targetSoc}%",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = EnergyOrange,
+                        )
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                        ) {
+                            TextButton(onClick = { draft = null }) { Text("Cancel") }
+                            Button(
+                                onClick = {
+                                    onSave(pending)
+                                    draft = null
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = BatteryGreen,
+                                    contentColor = OnBatteryGreen,
+                                ),
+                            ) { Text("Save $pending%") }
+                        }
+                    } else {
+                        Text(
+                            daytimeTargetStatus(target, dashboard),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = OnSurfaceVariant,
+                        )
+                    }
+                    // The fixed gap, so the inverter setting changes a couple of times a day, not constantly
+                    if (target.targetSoc in 1..99 && pending == null) {
+                        Text(
+                            "Once reached, solar charges it again ${target.targetSoc - target.resumeBelow}% " +
+                                "below the target, at ${target.resumeBelow}%",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = OnSurfaceVariant.copy(alpha = 0.7f),
+                        )
+                    }
+                    if (state.error != null) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Not saved: ${state.error}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ErrorRed,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Where spare solar is going now, and why. */
+private fun daytimeTargetStatus(target: DaytimeTarget, dashboard: DashboardState): String {
+    val toBattery = dashboard.spareSolarToBattery
+    return when {
+        target.targetSoc == 0 -> "Spare solar goes to the grid"
+        target.windowRunning -> "Discharge window running: spare solar goes to the grid until it ends"
+        toBattery == null -> "Spare solar charges the battery up to ${target.targetSoc}%"
+        toBattery -> "Spare solar is charging the battery up to ${target.targetSoc}%"
+        dashboard.batterySoc >= target.targetSoc ->
+            "Target reached: spare solar goes to the grid until the battery drops to ${target.resumeBelow}%"
+        else -> "Spare solar goes to the grid until the battery drops to ${target.resumeBelow}%"
     }
 }
 

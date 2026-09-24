@@ -25,6 +25,27 @@ data class DashboardData(
     @SerializedName("operation_mode") val operationMode: Int = 5,
     @SerializedName("charge_from_ac") val chargeFromAc: Int = 1,
     @SerializedName("max_charge_power") val maxChargePower: Int = 2500,
+    /** Where TOU mode sends solar the house does not use: the battery (true) or the grid. */
+    @SerializedName("spare_solar_to_battery") val spareSolarToBattery: Boolean? = null,
+)
+
+// ------------------------------------------------------------------
+// Data models — Daytime battery target
+// ------------------------------------------------------------------
+
+/** Spare solar charges the battery up to the target, and goes to the grid above it. */
+data class DaytimeTarget(
+    @SerializedName("target_soc") val targetSoc: Int,
+    /** Once at the target, spare solar goes back into the battery at this %. */
+    @SerializedName("resume_below") val resumeBelow: Int,
+    /** A discharge window is running: spare solar goes to the grid until it ends. */
+    @SerializedName("window_running") val windowRunning: Boolean,
+    /** Only on a save's reply: saved, but the inverter did not respond yet (the API retries). */
+    val warning: String? = null,
+)
+
+data class DaytimeTargetSettings(
+    @SerializedName("target_soc") val targetSoc: Int,
 )
 
 // ------------------------------------------------------------------
@@ -88,6 +109,12 @@ interface SolarApiService {
 
     @DELETE("discharge-windows/{windowId}")
     suspend fun deleteDischargeWindow(@Path("windowId") windowId: String)
+
+    @GET("daytime-target")
+    suspend fun getDaytimeTarget(): DaytimeTarget
+
+    @PUT("daytime-target")
+    suspend fun setDaytimeTarget(@Body body: DaytimeTargetSettings): DaytimeTarget
 }
 
 /** The API's reason for refusing a request ("Overlaps with ..."), or the error itself. */

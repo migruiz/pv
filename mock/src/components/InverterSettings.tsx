@@ -2,18 +2,22 @@ interface Props {
   operationMode: number;
   chargeFromAc: number;
   maxChargePower: number;
+  excessPvToBattery: number;
   onOperationModeChange: (v: number) => void;
   onChargeFromAcChange: (v: number) => void;
   onMaxChargePowerChange: (v: number) => void;
+  onExcessPvToBatteryChange: (v: number) => void;
 }
 
 export function InverterSettings({
   operationMode,
   chargeFromAc,
   maxChargePower,
+  excessPvToBattery,
   onOperationModeChange,
   onChargeFromAcChange,
   onMaxChargePowerChange,
+  onExcessPvToBatteryChange,
 }: Props) {
   return (
     <div className="control-group">
@@ -32,6 +36,22 @@ export function InverterSettings({
           onClick={() => onOperationModeChange(2)}
         >
           Self-consumption
+        </button>
+      </div>
+
+      <label>Spare solar in TOU (set by the daytime target)</label>
+      <div className="direction-toggle">
+        <button
+          className={excessPvToBattery === 0 ? "active" : ""}
+          onClick={() => onExcessPvToBatteryChange(0)}
+        >
+          Fed to grid
+        </button>
+        <button
+          className={excessPvToBattery === 1 ? "active" : ""}
+          onClick={() => onExcessPvToBatteryChange(1)}
+        >
+          Charge battery
         </button>
       </div>
 

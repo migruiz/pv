@@ -23,6 +23,7 @@ READINGS = {
     "storage_working_mode_settings": 5,
     "storage_charge_from_grid_function": True,
     "storage_maximum_charging_power": 2500,
+    "storage_excess_pv_energy_use_in_tou": 0,  # fed to grid, read on 2026-09-24
     "accumulated_yield_energy": 5922.79,
 }
 NOT_LOGGED_IN = RuntimeError(
@@ -112,6 +113,7 @@ class TestMapping:
             "operation_mode": 5,
             "charge_from_ac": 1,
             "max_charge_power": 2500,
+            "spare_solar_to_battery": False,
         }
 
     def test_importing_while_battery_discharges(self):
@@ -140,6 +142,12 @@ class TestMapping:
             "storage_charge_from_grid_function": False,
         })
         assert (data["operation_mode"], data["charge_from_ac"]) == (2, 0)
+
+    def test_spare_solar_charging_the_battery(self):
+        class Charge:  # huawei-solar returns StorageExcessPvEnergyUseInTOU members
+            value = 1
+
+        assert to_dashboard({**READINGS, "storage_excess_pv_energy_use_in_tou": Charge()})["spare_solar_to_battery"]
 
     def test_unread_settings_use_the_previous_defaults(self):
         data = to_dashboard({name: READINGS[name] for name in FAST_REGISTERS})
@@ -304,6 +312,15 @@ class TestCommands:
         await reader.write([("storage_forcible_discharge_power", 500), ("forcible_charge_discharge_write", 2)])
         assert client.writes == [("storage_forcible_discharge_power", 500), ("forcible_charge_discharge_write", 2)]
         assert len(handed_out) == 1
+
+    async def test_a_written_setting_shows_at_once_without_waiting_for_the_next_settings_read(self):
+        client = FakeClient()
+        reader, _, _ = make_reader(client)
+        await reader.step()
+        await reader.write([("storage_excess_pv_energy_use_in_tou", 1), ("forcible_charge_discharge_write", 0)])
+        dashboard = reader.dashboard()
+        assert dashboard["spare_solar_to_battery"] is True
+        assert "forcible_charge_discharge_write" not in reader._values  # commands are not readings
 
     async def test_write_without_a_session_raises(self):
         reader, _, _ = make_reader(FakeClient())

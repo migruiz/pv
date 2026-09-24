@@ -46,9 +46,11 @@ export function ControlPanel({ state, onUpdate, onReset }: Props) {
             operationMode={state.operation_mode}
             chargeFromAc={state.charge_from_ac}
             maxChargePower={state.max_charge_power}
+            excessPvToBattery={state.excess_pv_to_battery}
             onOperationModeChange={(v) => onUpdate({ operation_mode: v })}
             onChargeFromAcChange={(v) => onUpdate({ charge_from_ac: v })}
             onMaxChargePowerChange={(v) => onUpdate({ max_charge_power: v })}
+            onExcessPvToBatteryChange={(v) => onUpdate({ excess_pv_to_battery: v })}
           />
         </div>
 

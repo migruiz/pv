@@ -1,4 +1,4 @@
-"""Fakes for the discharge controller tests: a settable clock and an inverter that records commands."""
+"""Fakes for the discharge and daytime target tests: a settable clock and an inverter that records commands."""
 
 from datetime import datetime, timedelta
 from unittest.mock import patch
@@ -28,10 +28,12 @@ class Clock:
 
 
 class FakeInverter:
-    """Serves a battery % and records every command; fails reads or writes on demand."""
+    """Serves a battery % and the settings, records every command; fails reads or writes on demand."""
 
     def __init__(self, soc: float = 80.0):
         self.soc = soc
+        self.operation_mode = 5  # TOU
+        self.spare_solar_to_battery = False
         self.commands: list[dict] = []
         self.reading_fails = False
         self.write_fails = False
@@ -43,12 +45,17 @@ class FakeInverter:
     def dashboard(self) -> dict:
         if self.reading_fails:
             raise InverterUnavailable("no reading in 30 s")
-        return {"battery_soc": self.soc}
+        return {"battery_soc": self.soc, "operation_mode": self.operation_mode,
+                "spare_solar_to_battery": self.spare_solar_to_battery}
 
     async def write(self, settings):
         if self.write_fails:
             raise InverterUnavailable("write failed")
-        self.commands.append({name: int(value) for name, value in settings})
+        command = {name: int(value) for name, value in settings}
+        self.commands.append(command)
+        self.operation_mode = command.get("storage_working_mode_settings", self.operation_mode)
+        if "storage_excess_pv_energy_use_in_tou" in command:
+            self.spare_solar_to_battery = command["storage_excess_pv_energy_use_in_tou"] == 1
         if self.reply_lost:
             raise InverterUnavailable("no response received")
 

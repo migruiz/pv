@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import ovh.tenjo.pv.api.DaytimeTarget
+import ovh.tenjo.pv.api.DaytimeTargetSettings
 import ovh.tenjo.pv.api.DischargeWindow
 import ovh.tenjo.pv.api.SolarApiClient
 import ovh.tenjo.pv.api.WindowSettings
@@ -28,6 +30,7 @@ data class DashboardState(
     val operationMode: Int = 5,
     val chargeFromAc: Int = 1,
     val maxChargePower: Int = 2500,
+    val spareSolarToBattery: Boolean? = null,
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
     val error: String? = null,
@@ -39,6 +42,13 @@ data class WindowsState(
     val error: String? = null,
     /** When the list last loaded successfully (ms); a failed refresh keeps the old value. */
     val fetchedAt: Long = 0L,
+)
+
+/** The daytime battery target, and a change being saved. */
+data class TargetState(
+    val target: DaytimeTarget? = null,
+    val isSaving: Boolean = false,
+    val error: String? = null,
 )
 
 /** The window screen's save or delete in progress, its refusal, and whether it finished. */
@@ -59,6 +69,9 @@ class SolarViewModel : ViewModel() {
     private val _windows = MutableStateFlow(WindowsState())
     val windows: StateFlow<WindowsState> = _windows.asStateFlow()
 
+    private val _target = MutableStateFlow(TargetState())
+    val target: StateFlow<TargetState> = _target.asStateFlow()
+
     private val _editor = MutableStateFlow(EditorState())
     val editor: StateFlow<EditorState> = _editor.asStateFlow()
 
@@ -71,6 +84,7 @@ class SolarViewModel : ViewModel() {
     init {
         refreshDashboard()
         loadWindows()
+        loadTarget()
     }
 
     // -- Dashboard --
@@ -109,6 +123,7 @@ class SolarViewModel : ViewModel() {
                     operationMode = d.operationMode,
                     chargeFromAc = d.chargeFromAc,
                     maxChargePower = d.maxChargePower,
+                    spareSolarToBattery = d.spareSolarToBattery,
                     isLoading = false,
                 )
             } catch (e: Exception) {
@@ -121,6 +136,35 @@ class SolarViewModel : ViewModel() {
                 }
             }
         }
+
+    // -- Daytime battery target --
+
+    fun loadTarget(): Job = viewModelScope.launch {
+        try {
+            val target = api.getDaytimeTarget()
+            // A save in progress has the newer value
+            if (!_target.value.isSaving) _target.value = TargetState(target = target)
+        } catch (e: Exception) {
+            if (!_target.value.isSaving) _target.value = _target.value.copy(error = apiErrorMessage(e))
+        }
+    }
+
+    /** Save a new target. The API sets the inverter before replying. */
+    fun saveTarget(targetSoc: Int) {
+        val previous = _target.value.target
+        if (targetSoc == previous?.targetSoc) return
+        viewModelScope.launch {
+            // Shown straight away, so the slider does not jump back while saving
+            _target.value = TargetState(target = previous?.copy(targetSoc = targetSoc), isSaving = true)
+            try {
+                val saved = api.setDaytimeTarget(DaytimeTargetSettings(targetSoc))
+                _target.value = TargetState(target = saved)
+                _notice.value = saved.warning?.let { "Daytime target: $it" }
+            } catch (e: Exception) {
+                _target.value = TargetState(target = previous, error = apiErrorMessage(e))
+            }
+        }
+    }
 
     // -- Discharge Windows --
 
@@ -185,10 +229,11 @@ class SolarViewModel : ViewModel() {
                     delay(2_000)
                 }
             }
-            // Window states change slowly: every 15 s
+            // Window states and the daytime target change slowly: every 15 s
             launch {
                 while (isActive) {
                     loadWindows().join()
+                    loadTarget().join()
                     delay(15_000)
                 }
             }

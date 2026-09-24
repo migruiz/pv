@@ -174,6 +174,9 @@ class InverterReader:
                     raise InverterUnavailable(f"Writing {name} failed: {exc}") from exc
                 if not accepted:
                     raise InverterUnavailable(f"The inverter refused {name} = {value}")
+                # A setting also read as a slow register shows its new value now, not a few rounds later
+                if name in self._values:
+                    self._values[name] = value
 
     async def _connect(self):
         self._client = await self._client_factory(self._host, self._port)

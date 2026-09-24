@@ -1,6 +1,6 @@
 # PV Solar Manager
 
-Home solar PV monitoring and battery discharge windows for a Huawei SUN2000 installation in Dublin, Ireland. Consists of a Python API backend and an Android mobile app.
+Home solar PV monitoring, battery discharge windows and a daytime battery target for a Huawei SUN2000 installation in Dublin, Ireland. Consists of a Python API backend and an Android mobile app.
 
 ## Architecture
 
@@ -13,7 +13,7 @@ Home solar PV monitoring and battery discharge windows for a Huawei SUN2000 inst
 ```
 
 - **API** (`api/`): FastAPI service. Readings and battery commands go straight to the inverter over its WiFi hotspot (Modbus TCP, polled every 3 s). The API does not use the FusionSolar cloud; the FusionSolar app and portal keep working on their own
-- **App** (`app/`): Android Kotlin/Jetpack Compose mobile app with live energy flow dashboard and discharge windows
+- **App** (`app/`): Android Kotlin/Jetpack Compose mobile app with live energy flow dashboard, the daytime battery target and discharge windows
 - **Mock** (`mock/`): Node.js/TypeScript solar system simulator with React UI, standing in for the inverter in development
 - **Kindle** (`kindle/`): KOReader plugin for a jailbroken Kindle 4 that shows an e-ink dashboard PNG rendered by the API (`GET /dashboard.png`)
 - **Deployment**: Docker container on Raspberry Pi 4 (arm64), exposed via Cloudflare tunnel at `https://pv.tenjo.ovh`
@@ -29,7 +29,7 @@ Home solar PV monitoring and battery discharge windows for a Huawei SUN2000 inst
   - Inverter: SUN2000-5K-LB0, `NE=239198740` (5 kW rated, 2 MPPT strings, built-in WLAN, no Smart Dongle)
   - Battery: `NE=239198746` (5 kWh, LUNA2000)
   - Power Sensor: `NE=239198748`
-- **TOU schedule** (set in the FusionSolar app, never written by the API): charge from the grid 02:05-04:55, discharge to load the rest of the day
+- **TOU schedule** (set in the FusionSolar app; the API never changes the periods): charge from the grid 02:05-04:55, discharge to load the rest of the day. The API sets TOU's spare-solar setting for the daytime target, and puts the mode back to TOU during the night charge
 
 ## Project Structure
 
@@ -54,6 +54,10 @@ pv/
 │   │   ├── commands.py           # Forced discharge / stop register writes
 │   │   ├── controller.py         # The one rule, applied on a timer and after every change
 │   │   └── router.py             # /discharge-windows endpoints
+│   ├── daytime_target/           # Daytime battery target
+│   │   ├── store.py              # JSON file I/O (atomic writes)
+│   │   ├── controller.py         # Spare solar to the battery or the grid; TOU back on for the night charge
+│   │   └── router.py             # /daytime-target endpoints
 │   ├── routers/                  # Other API routers
 │   │   ├── dashboard.py          # Dashboard endpoint
 │   │   └── health.py             # Health check
@@ -62,10 +66,11 @@ pv/
 │   │   └── router.py             # GET /dashboard.png (Bearer KINDLE_TOKEN, stale-data fallback)
 │   ├── tests/                    # Pytest test suite
 │   │   ├── conftest.py           # Shared fixtures (mock clock reset)
-│   │   ├── discharge_fakes.py    # Settable clock, fake inverter recording commands, notification capture
+│   │   ├── discharge_fakes.py    # Settable clock, fake inverter (battery %, mode, spare solar) recording commands, notification capture
 │   │   ├── test_discharge_controller.py  # The rule, case by case (start, correct, target, edits, failures)
 │   │   ├── test_discharge_schedule.py    # Timing, daylight saving, power math, commands, store
 │   │   ├── test_discharge_api.py         # /discharge-windows HTTP endpoints
+│   │   ├── test_daytime_target.py        # Spare-solar rule, window priority, night-charge TOU check, /daytime-target
 │   │   ├── test_inverter.py              # Inverter reader, commands, register mapping, /dashboard
 │   │   └── test_kindle_*.py              # Kindle PNG renderer, estimate and history
 │   ├── Dockerfile                # Multi-arch image (amd64 + arm64)
@@ -77,7 +82,7 @@ pv/
 │   ├── server/
 │   │   ├── index.ts              # Express server (port 3002)
 │   │   ├── routes.ts             # UI state endpoints + inverter registers for the API
-│   │   └── state.ts              # In-memory simulator (SOC, energy balance, command log)
+│   │   └── state.ts              # In-memory simulator (SOC, energy balance, spare solar charging, command log)
 │   └── src/                      # React UI (Vite, port 5173)
 │
 ├── kindle/                       # Kindle 4 e-ink dashboard (see kindle/README.md)
@@ -89,13 +94,13 @@ pv/
 └── app/                          # Android mobile app (Kotlin/Compose)
     ├── app/src/main/java/ovh/tenjo/pv/
     │   ├── MainActivity.kt       # Navigation (dashboard / window screen), API config
-    │   ├── SolarViewModel.kt     # Dashboard + window state, save/delete; in the foreground: dashboard at once then every 2 s, windows every 15 s
+    │   ├── SolarViewModel.kt     # Dashboard, window and daytime target state, saves; in the foreground: dashboard at once then every 2 s, windows and target every 15 s
     │   ├── api/SolarApi.kt       # Retrofit client, data models, API error reasons
     │   ├── AutoDischargeService.kt     # Ongoing "Discharging" notification
     │   ├── PvFirebaseMessagingService.kt # FCM message handler
     │   ├── NotificationDismissReceiver.kt # Re-post notification on swipe
     │   └── ui/
-    │       ├── DashboardScreen.kt        # Energy flow diagram + discharge window list + inverter info
+    │       ├── DashboardScreen.kt        # Energy flow diagram + daytime target (slider, Save/Cancel) + discharge window list + inverter info
     │       ├── DischargeWindowScreen.kt  # New / edit window: name, start, end, duration, target, switches
     │       ├── TimePickers.kt            # Shared time/duration picker dialogs
     │       ├── TimeUtils.kt              # Shared time parsing/formatting
@@ -111,12 +116,14 @@ All endpoints except `/health` and `/docs` require `X-API-Key` header. `/dashboa
 |--------|------|-------------|
 | GET | `/health` | Age of the last inverter reading (no auth) |
 | GET | `/docs` | Swagger UI |
-| GET | `/dashboard` | Combined: PV, battery, grid, home power + flow directions + inverter settings, read from the inverter every 3 s (503 if no reading in 30 s) |
+| GET | `/dashboard` | Combined: PV, battery, grid, home power + flow directions + inverter settings + where spare solar goes (`spare_solar_to_battery`), read from the inverter every 3 s (503 if no reading in 30 s) |
 | GET | `/dashboard.png` | Kindle e-ink dashboard, 800x600 1-bit PNG (Bearer `KINDLE_TOKEN`, always 200) |
 | GET | `/discharge-windows` | All windows by start time, each with its live `state` (discharging, power, battery %, time left, target reached) |
 | POST | `/discharge-windows` | Create a window; applied before the reply (409 with the reason on overlap; `warning` if the inverter did not respond) |
 | PUT | `/discharge-windows/{id}` | Replace a window's settings; applied before the reply, also to a running discharge (`warning` as for POST) |
 | DELETE | `/discharge-windows/{id}` | Delete a window; a discharge it was running stops first (502, window kept, if the stop fails) |
+| GET | `/daytime-target` | The daytime target, the % at which charging resumes (`resume_below`), and whether a discharge window is holding it back (`window_running`) |
+| PUT | `/daytime-target` | Set the target `{"target_soc": 80}` (0-100); applied before the reply (`warning` if the inverter did not respond) |
 
 ### Mock-Only Endpoints (when MOCK_MODE=true)
 
@@ -127,11 +134,11 @@ All endpoints except `/health` and `/docs` require `X-API-Key` header. `/dashboa
 | POST | `/mock/time/advance` | Advance clock `{"minutes": 30}` |
 | POST | `/mock/time/reset` | Return to real system time |
 
-Each mock time change applies the discharge rule straight away.
+Each mock time change applies the discharge rule and the daytime target check straight away.
 
 ## Discharge Windows
 
-Windows are the only way the API controls the battery: there is no manual start or stop. For a one-off discharge, create a window starting now (the app's new window starts at the current time), set its end and target, and save.
+Windows are the only way the API force-discharges the battery: there is no manual start or stop (the daytime target only steers spare solar). For a one-off discharge, create a window starting now (the app's new window starts at the current time), set its end and target, and save.
 
 Stored in `/data/discharge_windows.json` (Docker volume) or `api/discharge_windows.json` (local dev). Each window has:
 
@@ -163,9 +170,20 @@ Consequences: edits to a running window (end, target, switched off, deleted, mov
 - **Failures are visible**: a window that is running (or may be, after a start whose reply was lost) is deleted only after its stop is confirmed (otherwise 502 and the window stays, still shown discharging); a save the inverter did not respond to replies with a `warning`, shown above the list in the app; either way the rule is retried every 30 s.
 - **Notifications**: started, every correction, and stopped, only for windows with notifications on. Switching notifications off mid-discharge sends "stopped" to clear the phone. Pushes are sent in the background after the control lock is released, one at a time to completion and in order (Firebase's own HTTP timeout is 10 s), so a stalled push never delays a stop, a reply or the next check, and a late "started" can never overtake a "stopped". The app clears an ongoing notification only when a fresh, successful list (arriving over a minute after it went up) shows nothing discharging: a lost "stopped" push.
 
+## Daytime Battery Target
+
+One setting, 0-100%, in `/data/daytime_target.json` (`api/daytime_target.json` in local dev; missing = 0). Spare solar (what the house does not use) charges the battery up to the target and goes to the grid above it, so in autumn and winter the battery reaches the evening fuller. The inverter stays in TOU mode all the time: `daytime_target/controller.py` flips TOU's "excess PV energy" setting (fed to grid / charge) from the battery % every 30 s and straight after a save. Proven on the inverter on 2026-09-24: within ~10 s the export went to zero and the battery took all the spare solar, without importing.
+
+- **The rule**: at or above the target, spare solar goes to the grid; it goes back into the battery once the battery is 10% below the target (80% target: at 70%), so the setting changes a couple of times a day. Right after a save the gap is ignored: a battery anywhere below the new target charges. 0% keeps it on the grid (the behaviour before this feature); 100% keeps it on the battery
+- **The battery always powers the house**, at any level; the grid never charges it by day, only the TOU charge period at night
+- **Discharge windows come first**: for the whole of a window's run, even after it reached its own target, spare solar goes to the grid, so solar never refills what the window is emptying. The target applies again when the window ends
+- **Night charge check**: between 02:00 and 05:00, an inverter found out of TOU mode (switched by hand in the FusionSolar app) is put back into TOU, retried every 30 s, so the 02:05 grid charge always runs. Tested in the unit tests and the simulator, not yet seen on the real inverter
+- **Nothing depends on it running**: if the API or the hotspot link dies, the setting stays where it was (a little more or less solar in the battery) and the TOU night charge happens anyway. The API owns the setting: a change made in the FusionSolar app is put back within about 30 s
+- **App**: a section between the dashboard and the windows. The slider only picks a value; Save applies it, Cancel drops it. It shows where spare solar goes now and the % at which charging resumes
+
 ## Inverter Registers
 
-Read and written with the `huawei-solar` library over the installer session. The battery command sequence was proven on the inverter on 2026-09-23; the FusionSolar cloud's own forced-discharge command writes these same registers.
+Read and written with the `huawei-solar` library over the installer session. The battery command sequence was proven on the inverter on 2026-09-23, the spare-solar setting on 2026-09-24; the FusionSolar cloud's own forced-discharge command writes these same registers.
 
 | Register name | Use |
 |---------------|-----|
@@ -174,6 +192,8 @@ Read and written with the `huawei-solar` library over the installer session. The
 | `storage_forced_charging_and_discharging_period` | Minutes left in the window (the inverter stops by itself after it) |
 | `storage_forcible_discharge_power` | W (0-2500); about 8% less is measured at the battery |
 | `forcible_charge_discharge_write` | 2 = discharge, 0 = stop; written last |
+| `storage_excess_pv_energy_use_in_tou` | TOU's spare solar: 0 = fed to grid, 1 = charge the battery; set by the daytime target, read with the settings |
+| `storage_working_mode_settings` | Operation mode (5 = TOU); written back to TOU only between 02:00 and 05:00, and only if it is not TOU |
 
 ## Kindle Dashboard
 
@@ -188,7 +208,7 @@ A jailbroken Kindle 4 (non-touch) shows an e-ink dashboard: battery % with 12 ho
 
 ### Mock System + API (full local dev)
 
-The simulator stands in for the inverter: it serves and accepts the same register names (`GET/POST /mock/registers`), so mock mode runs the real reader, mapping and discharge commands. Push notifications are off in mock mode, so a simulated discharge never reaches the real phone.
+The simulator stands in for the inverter: it serves and accepts the same register names (`GET/POST /mock/registers`), so mock mode runs the real reader, mapping, discharge commands and daytime target. With spare solar set to charge (or in self-consumption mode) the simulator charges the battery from PV minus home. Push notifications are off in mock mode, so a simulated discharge never reaches the real phone.
 
 ```bash
 # Terminal 1: Start mock solar simulator (Express API on :3002, React UI on :5173)
@@ -228,10 +248,10 @@ uv run --with pytest --with pytest-asyncio --with httpx python -m pytest tests/ 
 
 Kindle plugin tests (from repo root): `uv run --no-project --with lupa python -m unittest discover -s kindle/tests -v`
 
-Tests run in about 2 seconds with no external dependencies (no Node.js mock, no Firebase, no network). The discharge tests use:
+Tests run in about 2 seconds with no external dependencies (no Node.js mock, no Firebase, no network). The discharge and daytime target tests use:
 
 - **Clock**: a settable Dublin clock passed to the controller, so each case sets the time it needs
-- **FakeInverter**: serves a battery % and records every command written; reads or writes fail on demand
+- **FakeInverter**: serves a battery %, the operation mode and the spare-solar setting, and records every command written; reads or writes fail on demand
 - **Captured notifications**: FCM functions are patched and the sends recorded as (kind, window) pairs
 - **Isolated store**: each test gets a `tmp_path` windows file
 
@@ -277,12 +297,20 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n ovh.tenjo.pv/.MainActivity
 ```
 
+To send the app to the phone as a file, build the shrunk release APK instead (~3 MB against ~60 MB for the debug one; signed with the debug key, so it installs over a debug build). The lint check skipped here fails on an older warning about how `MainActivity` asks for the notification permission:
+
+```bash
+cd app && ./gradlew assembleRelease -x lintVitalRelease -x lintVitalAnalyzeRelease
+# app/build/outputs/apk/release/app-release.apk
+```
+
 ## Deployment
 
 - **Docker Hub image**: `migruiz/pv-solar-api:latest` (multi-arch: amd64 + arm64)
 - **Production host**: Raspberry Pi 4 running Docker via Portainer
 - **Public URL**: `https://pv.tenjo.ovh` (Cloudflare tunnel)
 - **Discharge windows config**: Persisted to `/data/discharge_windows.json` volume
+- **Daytime target**: `/data/daytime_target.json` volume
 - **Chart history**: `/data/history.sqlite3` volume (Kindle charts)
 - **Portainer stack**: `pv` (compose at `/data/compose/68/docker-compose.yml` in the `portainer_data` volume); env vars are inline in the stack file
 - **Inverter link**: the Pi's `wlan0` joins the inverter hotspot `SUN2000-TA2550448190` (NetworkManager connection `inverter-hotspot`: autoconnect with unlimited retries, `ipv4.never-default` so internet stays on `eth0`), and `wifi-radio-on.service` switches the radio on at boot. The inverter (SUN2000-5K-LB0, built-in WLAN, no Smart Dongle) answers one local Modbus session at a time, so the FusionSolar app's local screens cannot connect while the API is polling
@@ -306,5 +334,5 @@ adb shell am start -n ovh.tenjo.pv/.MainActivity
 - **Everything local**: `inverter/reader.py` keeps one Modbus session to the inverter hotspot (`192.168.8.1:6607`, `installer` login via `huawei-solar`), polls every 3 s and caches the result; `/dashboard` and `/dashboard.png` only read the cache, so clients can poll as often as they like. Settings and the lifetime total are re-read every 10th round. Battery commands (`write()`) go over the same session between two reading rounds, under a lock. A rejected password stops polling (retries would lock logins for ~10 min), and failures are logged sparingly (first, then every 100th). The lifetime `total_energy_kwh` is the inverter's own counter, about 1,019 kWh above FusionSolar's plant total. Trade-off: if the hotspot link drops, both readings and control stop; the discharge command's own period is the safety net
 - **Saved windows are the only instruction**: one controller applies one rule, with no per-window tasks, no "launched" bookkeeping and no state files. After a restart the next check applies the rule again
 - **Discharge windows** use a JSON config file on the Docker volume, not a database, written atomically (write tmp + rename). An unreadable file raises instead of being treated as empty, so a save can never wipe the windows
-- **TOU schedule is left alone**: the API never writes the operation mode or TOU windows; a forced discharge overrides TOU while it runs, and the inverter goes back to the schedule by itself
+- **TOU schedule is left alone**: the API never writes the TOU periods. It writes only TOU's spare-solar setting (daytime target) and, during the night charge, the operation mode back to TOU; a forced discharge overrides TOU while it runs, and the inverter goes back to the schedule by itself
 - **Mock clock**: in mock mode, time comes from `mock_clock.get_now()`, which the `/mock/time` endpoints move; the controller takes a clock argument so tests set the time directly

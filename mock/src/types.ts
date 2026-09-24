@@ -15,5 +15,6 @@ export interface SimulatorState {
   operation_mode: number;
   charge_from_ac: number;
   max_charge_power: number;
+  excess_pv_to_battery: number;
   command_log: { timestamp: string; signals: Record<string, string> }[];
 }

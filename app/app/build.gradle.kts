@@ -32,7 +32,11 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // Shrunk to a size that can be sent to the phone (the debug APK is ~60 MB, mostly unused icons)
+            isMinifyEnabled = true
+            isShrinkResources = true
+            // Sideloaded like the debug build and signed with the same key, so it installs over it
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

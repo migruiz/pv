@@ -24,6 +24,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 # --- Application layer ---
 COPY main.py auth.py config.py dependencies.py notifications.py mock_clock.py ./
 COPY discharge/ discharge/
+COPY daytime_target/ daytime_target/
 COPY routers/ routers/
 COPY kindle_dashboard/ kindle_dashboard/
 COPY inverter/ inverter/

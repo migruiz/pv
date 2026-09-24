@@ -31,6 +31,7 @@ export interface SimulatorState {
   operation_mode: number; // 2=Max self-consumption, 5=TOU
   charge_from_ac: number; // 0=Disabled, 1=Enabled
   max_charge_power: number; // 200-2500 W
+  excess_pv_to_battery: number; // TOU's spare solar: 0=Fed to grid, 1=Charge the battery
 
   // Command log
   command_log: CommandEntry[];
@@ -54,6 +55,7 @@ const DEFAULT_STATE: Omit<SimulatorState, "grid_kw" | "grid_importing"> = {
   operation_mode: 5,
   charge_from_ac: 1,
   max_charge_power: 2500,
+  excess_pv_to_battery: 0,
   command_log: [],
 };
 
@@ -61,6 +63,8 @@ let state: SimulatorState = { ...DEFAULT_STATE, grid_kw: 0, grid_importing: fals
 recalculateGrid();
 
 let socTimer: ReturnType<typeof setInterval> | null = null;
+// The battery is taking spare solar by itself (no forced command): its power follows PV minus home
+let autoCharging = false;
 
 // ---------------------------------------------------------------------------
 // Energy balance
@@ -87,14 +91,21 @@ function recalculateGrid() {
 // ---------------------------------------------------------------------------
 
 function startSocSimulation() {
-  stopSocSimulation();
+  if (socTimer) return;
   socTimer = setInterval(() => {
-    if (state.forced_mode === 0) {
+    if (state.forced_mode === 0 && !autoCharging) {
       stopSocSimulation();
       return;
     }
 
     const hoursElapsed = SOC_TICK_INTERVAL_MS / 1000 / 3600;
+    if (state.forced_mode === 0) {
+      const energy = state.battery_power_kw * hoursElapsed;
+      state.battery_soc = Math.min(100, state.battery_soc + (energy / BATTERY_CAPACITY_KWH) * 100);
+      applySpareSolar(); // stops at 100%
+      return;
+    }
+
     const energyDelta = state.forced_power_kw * hoursElapsed; // kWh
     const socDelta = (energyDelta / BATTERY_CAPACITY_KWH) * 100;
 
@@ -121,6 +132,7 @@ function startSocSimulation() {
       state.forced_mode = 0;
       state.battery_power_kw = 0;
       stopSocSimulation();
+      applySpareSolar();
     }
   }, SOC_TICK_INTERVAL_MS);
 }
@@ -130,6 +142,30 @@ function stopSocSimulation() {
     clearInterval(socTimer);
     socTimer = null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Spare solar into the battery (TOU set to charge, or self-consumption)
+// ---------------------------------------------------------------------------
+
+function chargesFromSpareSolar(): boolean {
+  const toBattery = state.operation_mode === 2 || (state.operation_mode === 5 && state.excess_pv_to_battery === 1);
+  return toBattery && state.battery_soc < 100 && state.pv_kw > state.home_kw;
+}
+
+/** Without a forced command, spare solar charges the battery (up to its max charge power) or goes to the grid. */
+function applySpareSolar() {
+  if (state.forced_mode !== 0) return; // a forced charge or discharge overrides
+  if (chargesFromSpareSolar()) {
+    state.battery_power_kw = Math.min(state.pv_kw - state.home_kw, state.max_charge_power / 1000);
+    state.battery_charging = true;
+    autoCharging = true;
+    startSocSimulation();
+  } else if (autoCharging) {
+    state.battery_power_kw = 0;
+    autoCharging = false;
+  }
+  recalculateGrid();
 }
 
 // ---------------------------------------------------------------------------
@@ -143,11 +179,13 @@ export function getState(): SimulatorState {
 export function updateState(patch: Partial<SimulatorState>) {
   const { grid_kw, grid_importing, command_log, ...allowed } = patch;
   Object.assign(state, allowed);
+  applySpareSolar();
   recalculateGrid();
 }
 
 export function resetState() {
   stopSocSimulation();
+  autoCharging = false;
   state = { ...DEFAULT_STATE, command_log: [], grid_kw: 0, grid_importing: false };
   recalculateGrid();
 }
@@ -167,11 +205,12 @@ export function registers(): Record<string, number> {
     storage_working_mode_settings: state.operation_mode,
     storage_charge_from_grid_function: state.charge_from_ac,
     storage_maximum_charging_power: state.max_charge_power,
+    storage_excess_pv_energy_use_in_tou: state.excess_pv_to_battery,
     accumulated_yield_energy: state.total_energy_kwh,
   };
 }
 
-/** Register writes from the Python API: the forced charge/discharge settings and command. */
+/** Register writes from the Python API: the forced charge/discharge settings and command, and two TOU settings. */
 export function writeRegisters(values: Record<string, number>) {
   for (const [name, value] of Object.entries(values)) {
     switch (name) {
@@ -187,6 +226,16 @@ export function writeRegisters(values: Record<string, number>) {
       case "forcible_charge_discharge_write": // 0=Stop, 1=Charge, 2=Discharge
         applyForcedCommand(value);
         break;
+      case "storage_excess_pv_energy_use_in_tou": // 0=Fed to grid, 1=Charge
+        state.excess_pv_to_battery = value;
+        logCommand({ spare_solar: value === 1 ? "battery" : "grid" });
+        applySpareSolar();
+        break;
+      case "storage_working_mode_settings": // 2=Max self-consumption, 5=TOU
+        state.operation_mode = value;
+        logCommand({ operation_mode: String(value) });
+        applySpareSolar();
+        break;
       default:
         throw new Error(`Unknown register ${name}`);
     }
@@ -195,9 +244,11 @@ export function writeRegisters(values: Record<string, number>) {
 
 function applyForcedCommand(mode: number) {
   state.forced_mode = mode;
+  autoCharging = false;
+  stopSocSimulation();
   if (mode === 0) {
     state.battery_power_kw = 0;
-    stopSocSimulation();
+    applySpareSolar(); // back to TOU's own behaviour
   } else {
     state.battery_power_kw = state.forced_power_kw;
     state.battery_charging = mode === 1;
@@ -205,13 +256,14 @@ function applyForcedCommand(mode: number) {
   }
   recalculateGrid();
 
-  state.command_log.push({
-    timestamp: new Date().toISOString(),
-    signals: {
-      charge_discharge_mode: String(mode),
-      ...(mode === 0 ? {} : { forced_power_kw: state.forced_power_kw.toFixed(3), period_min: String(state.forced_duration_min) }),
-    },
+  logCommand({
+    charge_discharge_mode: String(mode),
+    ...(mode === 0 ? {} : { forced_power_kw: state.forced_power_kw.toFixed(3), period_min: String(state.forced_duration_min) }),
   });
+}
+
+function logCommand(signals: Record<string, string>) {
+  state.command_log.push({ timestamp: new Date().toISOString(), signals });
   // Keep last 50 entries
   if (state.command_log.length > 50) {
     state.command_log = state.command_log.slice(-50);
