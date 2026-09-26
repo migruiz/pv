@@ -18,7 +18,7 @@ PICTURE_DIRECTORY = 'local directory = "/tmp/solar-dashboard"'
 
 @unittest.skipUnless(LuaRuntime, "lupa with LuaJIT 2.1 required")
 class SolarPluginTests(unittest.TestCase):
-    def run_plugin(self, exercise, status=200, interval=3, full_refresh_every=100):
+    def run_plugin(self, exercise, status=200, interval=1, full_refresh_every=100):
         lua = LuaRuntime(unpack_returned_tuples=True)
         g = lua.globals()
         g.http_status = status
@@ -47,11 +47,12 @@ class SolarPluginTests(unittest.TestCase):
               nextTick=function(_,f) f() end,
               preventStandby=function() prevented=(prevented or 0)+1 end,
               allowStandby=function() prevented=prevented-1 end,
-              scheduleIn=function(_,s,f) scheduled=s; scheduled_fn=f end,
+              scheduleIn=function(_,s,f) scheduled=s; scheduled_fn=f; scheduled_after_paint=painted end,
               unschedule=function() scheduled=nil end,
               show=function(_,v) shown=v end,
               close=function(_,v) if shown==v then shown=nil end end,
-              setDirty=function(_,v,t) refresh_type=t end,
+              setDirty=function(_,v,t) refresh_type=t; painted=false end,
+              forceRePaint=function() painted=true end,
             }
             package.preload["device"]=function() return device end
             package.preload["ui/geometry"]=function() return {new=function(_,t) return t end} end
@@ -110,7 +111,7 @@ class SolarPluginTests(unittest.TestCase):
         def exercise(plugin, lua):
             g = lua.globals()
             self.assertTrue(plugin.running)
-            self.assertEqual(g.scheduled, 3)
+            self.assertEqual(g.scheduled, 1)
             self.assertEqual(g.prevented, 1)
             self.assertEqual(g.refresh_type, "full")
             self.assertEqual(g.device.screen.rotation, 1)
@@ -145,15 +146,13 @@ class SolarPluginTests(unittest.TestCase):
             self.assertNotIn("suspend", g.commands)
         self.run_plugin(exercise)
 
-    def test_cadence_is_measured_from_the_start_of_each_fetch(self):
+    def test_waits_a_second_after_each_picture_is_on_screen(self):
         def exercise(plugin, lua):
             g = lua.globals()
-            g.download_seconds = 2
-            g.scheduled_fn()
-            self.assertEqual(g.scheduled, 1)
             g.download_seconds = 5
             g.scheduled_fn()
-            self.assertEqual(g.scheduled, 1)  # a slow download never turns into a busy loop
+            # However long the download took, the wait starts once the picture is painted
+            self.assertEqual((g.scheduled, g.scheduled_after_paint), (1, True))
             plugin.stop(plugin)
         self.run_plugin(exercise)
 
@@ -165,7 +164,7 @@ class SolarPluginTests(unittest.TestCase):
             g.scheduled_fn()
             self.assertTrue(plugin.running)
             self.assertTrue(lua.eval("shown == picture"))
-            self.assertEqual(g.scheduled, 3)
+            self.assertEqual(g.scheduled, 5)
             plugin.stop(plugin)
         self.run_plugin(exercise)
 
@@ -174,7 +173,7 @@ class SolarPluginTests(unittest.TestCase):
             g = lua.globals()
             self.assertTrue(plugin.running)
             self.assertIn("unavailable", g.shown.text)
-            self.assertEqual(g.scheduled, 3)
+            self.assertEqual(g.scheduled, 5)
             g.shown = None
             g.scheduled_fn()
             self.assertIsNone(g.shown)  # not repeated every few seconds

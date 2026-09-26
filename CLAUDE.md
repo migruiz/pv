@@ -63,6 +63,7 @@ pv/
 │   │   └── health.py             # Health check
 │   ├── kindle_dashboard/         # Kindle e-ink dashboard
 │   │   ├── renderer.py           # 800x600 1-bit PNG drawing (pure functions, bundled DejaVu fonts)
+│   │   ├── daily_energy.py       # Today's running kWh charts, the 5 am mark, the 10 s power/energy switch
 │   │   └── router.py             # GET /dashboard.png (Bearer KINDLE_TOKEN, stale-data fallback)
 │   ├── tests/                    # Pytest test suite
 │   │   ├── conftest.py           # Shared fixtures (mock clock reset)
@@ -86,7 +87,7 @@ pv/
 │   └── src/                      # React UI (Vite, port 5173)
 │
 ├── kindle/                       # Kindle 4 e-ink dashboard (see kindle/README.md)
-│   ├── koreader/plugins/solardashboard.koplugin/  # KOReader plugin: fetch + display every 3 s (mains power)
+│   ├── koreader/plugins/solardashboard.koplugin/  # KOReader plugin: fetch + display, 1 s after each picture (mains power)
 │   ├── extensions/solar-dashboard/                # KUAL menu launcher
 │   ├── install.py                # USB installer (config + token from gitignored JSON)
 │   └── tests/                    # Plugin tests (LuaJIT via lupa)
@@ -197,11 +198,11 @@ Read and written with the `huawei-solar` library over the installer session. The
 
 ## Kindle Dashboard
 
-A jailbroken Kindle 4 (non-touch) shows an e-ink dashboard: battery % with 12 hours of charge history inside the battery outline, the battery's charge or discharge kW by its icon (above the bolt, below the arrow; none under 0.1 kW), the daytime target as a dashed vertical line inside the battery where the fill has to reach, its value at the foot (none when the target is off), battery-empty time (estimated from sunset and a 0.25 kW baseline load, `kindle_dashboard/estimate.py`) with today's sunset time, grid export kW while exporting, solar kW and home kW each with a 12-hour chart, and `Updated HH:MM:SS` (Dublin time of the inverter reading). Full device and install docs: `kindle/README.md`.
+A jailbroken Kindle 4 (non-touch) shows an e-ink dashboard: battery % with 12 hours of charge history inside the battery outline, the battery's charge or discharge kW by its icon (above the bolt, below the arrow; none under 0.1 kW), the daytime target as a dashed vertical line inside the battery where the fill has to reach, its value at the foot (none when the target is off), battery-empty time (estimated from sunset and a 0.25 kW baseline load, `kindle_dashboard/estimate.py`) with today's sunset time, grid export kW while exporting, solar kW and home kW each with a chart, and `Updated HH:MM:SS` (Dublin time of the inverter reading). The two charts switch every 10 s, by the Pi's clock, between the last 12 hours of kW and today's running total (kWh since midnight, the total so far large, white on a black box, at the top right as `6.8k`; production drawn from an hour before today's sunrise to an hour after sunset, consumption midnight to midnight); today's home total also marks 5 am, when the cheap night rate ends, with dashed lines and the total at 5 am (`kindle_dashboard/daily_energy.py`). Full device and install docs: `kindle/README.md`.
 
-- **API** (`api/kindle_dashboard/`): `GET /dashboard.png` uses the inverter reader's cached dashboard, renders an 800x600 1-bit PNG with Pillow and bundled DejaVu fonts (in a thread, only when a new reading arrives or the daytime target changes), and always returns 200. When the inverter reading goes stale it redraws the last good readings with a **STALE DATA** banner
+- **API** (`api/kindle_dashboard/`): `GET /dashboard.png` uses the inverter reader's cached dashboard, renders an 800x600 1-bit PNG with Pillow and bundled DejaVu fonts (in a thread, only when a new reading arrives, the daytime target changes or the charts switch; about 0.11 s on the Pi), and always returns 200. When the inverter reading goes stale it redraws the last good readings with a **STALE DATA** banner
 - **Auth**: `Authorization: Bearer <KINDLE_TOKEN>`, a read-only token separate from `API_KEY`. Unset `KINDLE_TOKEN` disables the endpoint (401)
-- **Kindle** (`kindle/`): KOReader plugin started from KUAL. The Kindle stays on mains power with Wi-Fi on: every 3 s it downloads the PNG and shows it (partial e-ink update, full flash every 100 pictures). Pictures go to `/tmp` (RAM), not flash
+- **Kindle** (`kindle/`): KOReader plugin started from KUAL. The Kindle stays on mains power with Wi-Fi on: it downloads the PNG, shows it (partial e-ink update, full flash every 100 pictures), waits 1 s once it is on screen and asks again (every 5 s after a failure). Pictures go to `/tmp` (RAM), not flash
 - **Address**: the Kindle uses `http://192.168.0.11:8100/dashboard.png` on the LAN. The K4 cannot do modern TLS, and the plugin only accepts `http://<IP>:<port>/dashboard.png`
 
 ## Development
@@ -314,7 +315,7 @@ cd app && ./gradlew assembleRelease -x lintVitalRelease -x lintVitalAnalyzeRelea
 - **Chart history**: `/data/history.sqlite3` volume (Kindle charts)
 - **Portainer stack**: `pv` (compose at `/data/compose/68/docker-compose.yml` in the `portainer_data` volume); env vars are inline in the stack file
 - **Inverter link**: the Pi's `wlan0` joins the inverter hotspot `SUN2000-TA2550448190` (NetworkManager connection `inverter-hotspot`: autoconnect with unlimited retries, `ipv4.never-default` so internet stays on `eth0`), and `wifi-radio-on.service` switches the radio on at boot. The inverter (SUN2000-5K-LB0, built-in WLAN, no Smart Dongle) answers one local Modbus session at a time, so the FusionSolar app's local screens cannot connect while the API is polling
-- **Kindle dashboard**: Kindle polls `http://192.168.0.11:8100/dashboard.png` on the LAN every 3 s; install/update the plugin with `python kindle/install.py` over USB
+- **Kindle dashboard**: Kindle polls `http://192.168.0.11:8100/dashboard.png` on the LAN, 1 s after each picture is shown; install/update the plugin with `python kindle/install.py` over USB
 
 ## Environment Variables
 

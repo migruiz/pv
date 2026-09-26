@@ -51,7 +51,7 @@ def main():
     assert (DRIVE / "koreader/settings.reader.lua").is_file(), "Kindle must be connected by USB with KOReader closed"
     assert CONFIG.is_file(), f"Create {CONFIG.name} from the example; token must match the API's KINDLE_TOKEN"
     config = json.loads(CONFIG.read_text(encoding="utf-8-sig"))
-    config.setdefault("interval", 3)
+    config.setdefault("interval", 1)
     config.setdefault("full_refresh_every", 100)
     config.pop("power_mode", None)  # battery sleep mode was removed: the Kindle stays on mains power
     # Same constraints main.lua enforces: plain HTTP, IP address, /dashboard.png
@@ -78,7 +78,8 @@ def main():
     (DRIVE / "notes/solar").mkdir(parents=True, exist_ok=True)
     assert json.loads(pairing.read_text(encoding="utf-8")) == config
     print("Solar dashboard installed: " + config["url"])
-    print(f"Refresh every {config['interval']} s, full e-ink refresh every {config['full_refresh_every']} pictures")
+    print(f"Next picture {config['interval']} s after each one is shown, "
+          f"full e-ink refresh every {config['full_refresh_every']} pictures")
     print("Backup: " + str(backup))
 
 

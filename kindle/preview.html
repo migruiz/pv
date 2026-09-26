@@ -19,10 +19,12 @@ const batteryState = ['charging', 'discharging', 'idle'].includes(requestedState
 const requestedGrid = new URLSearchParams(location.search).get('grid');
 const gridState = ['exporting', 'importing', 'idle'].includes(requestedGrid) ? requestedGrid : 'exporting';
 const capture = document.body.dataset.capture;
-const live = document.body.dataset.live === 'true';
-document.title = live ? 'Kindle · Live Raspberry Pi' : capture ? 'Kindle · FusionSolar snapshot · ' + capture : 'Kindle · ' + batteryState + ' · Mock data';
-img.alt = live ? 'Live dashboard PNG served to the Kindle' : capture ? 'FusionSolar readings captured at ' + capture : 'Mock solar dashboard: battery ' + batteryState;
-img.title = live ? 'Live Raspberry Pi dashboard; refreshes every 2 seconds' : capture ? 'Captured readings: ' + capture + '. The chart now is the capture time.' : 'Mock solar dashboard';
+const liveMode = document.body.dataset.live;
+const live = Boolean(liveMode);
+const dailyEnergy = liveMode === 'daily-energy';
+document.title = dailyEnergy ? 'Kindle · Live Pi readings · Power and daily energy alternating' : live ? 'Kindle · Live Raspberry Pi' : capture ? 'Kindle · FusionSolar snapshot · ' + capture : 'Kindle · ' + batteryState + ' · Mock data';
+img.alt = dailyEnergy ? 'Power charts and daily energy totals, alternating, drawn locally from live Pi readings' : live ? 'Live dashboard PNG served to the Kindle' : capture ? 'FusionSolar readings captured at ' + capture : 'Mock solar dashboard: battery ' + batteryState;
+img.title = dailyEnergy ? 'Local test: power charts and daily energy totals from live Pi readings, 10 seconds each' : live ? 'Live Raspberry Pi dashboard; refreshes every 2 seconds' : capture ? 'Captured readings: ' + capture + '. The chart now is the capture time.' : 'Mock solar dashboard';
 let busy = false, currentUrl = null, count = 0;
 async function refresh() {
   if (busy) return;
@@ -42,7 +44,10 @@ async function refresh() {
   } finally {
     if (nextUrl) URL.revokeObjectURL(nextUrl);
     busy = false;
+    // Daily energy mode: like the Kindle, ask again 1 second after each picture is shown;
+    // the server switches the charts every 10 seconds by the clock.
+    if (dailyEnergy) setTimeout(refresh, 1000);
   }
 }
-refresh(); setInterval(refresh, 2000);
+refresh(); if (!dailyEnergy) setInterval(refresh, 2000);
 </script></main></body></html>

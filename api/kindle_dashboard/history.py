@@ -102,6 +102,15 @@ class HistoryStore:
             previous = row
         return history, positions
 
+    def power(self, key, start_ts, end_ts):
+        """(timestamp, average kW) for every stored minute with that power reading."""
+        column = {"pv_kw": "pv_sum", "home_kw": "home_sum"}[key]
+        with self._lock:
+            return self._db.execute(
+                f"SELECT observed_at,{column}/sample_count FROM samples "
+                f"WHERE minute BETWEEN ? AND ? AND {column} IS NOT NULL ORDER BY minute",
+                (int(start_ts // 60), int(end_ts // 60))).fetchall()
+
     def status(self):
         with self._lock:
             count, first, last = self._db.execute("SELECT count(*),min(observed_at),max(observed_at) FROM samples").fetchone()

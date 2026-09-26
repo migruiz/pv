@@ -68,8 +68,9 @@ function SolarDashboard:loadConfig()
     file:close()
     assert(type(config.url) == "string" and config.url:match("^http://[%d%.]+:%d+/dashboard%.png$"), "Invalid dashboard URL")
     assert(type(config.token) == "string" and #config.token >= 32, "Invalid dashboard token")
-    -- The Kindle stays on mains power with Wi-Fi on, so it can ask for a new picture every few seconds.
-    config.interval = tonumber(config.interval) or 3
+    -- The Kindle stays on mains power with Wi-Fi on, so it asks for the next picture a second after
+    -- each one is on screen. The Pi switches the solar and home charts every 10 seconds.
+    config.interval = tonumber(config.interval) or 1
     assert(config.interval >= 1, "Refresh interval must be at least 1 second")
     -- Fast partial e-ink updates leave ghosting; a full flash every so many pictures clears it.
     config.full_refresh_every = math.floor(tonumber(config.full_refresh_every) or 100)
@@ -166,6 +167,8 @@ function SolarDashboard:display(path)
     UIManager:show(view)
     UIManager:setDirty(view, (self.refresh_count % self.config.full_refresh_every == 0) and "full" or "ui")
     if old then UIManager:close(old) end
+    -- Paint now rather than on the next UI tick, so the wait for the next picture starts once this one is up.
+    UIManager:forceRePaint()
     self.refresh_count = self.refresh_count + 1
 end
 
@@ -184,7 +187,6 @@ end
 
 function SolarDashboard:refresh()
     if not self.running or self.refreshing then return end
-    local started = os.time()
     if not NetworkMgr:isConnected() then
         -- Wi-Fi dropped: ask the Kindle to rejoin its saved network quietly, then look again shortly.
         NetworkMgr:restoreWifiAsync()
@@ -199,11 +201,12 @@ function SolarDashboard:refresh()
     if ok then
         if self.failures > 0 then logger.info("Solar dashboard recovered after", self.failures, "failures") end
         self.failures = 0
+        self:scheduleNext(self.config.interval)
     else
+        -- The last picture stays up; do not ask an unreachable Pi every second.
         self:noteFailure(result)
+        self:scheduleNext(math.max(5, self.config.interval))
     end
-    -- Keep a steady cadence measured from the start of this fetch, without ever spinning.
-    self:scheduleNext(math.max(1, self.config.interval - (os.time() - started)))
 end
 
 function SolarDashboard:start()

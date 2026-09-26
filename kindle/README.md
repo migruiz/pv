@@ -4,7 +4,8 @@ An old Kindle 4 (non-touch) repurposed as an always-on, mains-powered e-ink sola
 
 ```
 Inverter ──> pv-solar-api (Pi) ──GET /dashboard.png──> Kindle
-  every 3 s   renders 800x600 1-bit PNG    Bearer KINDLE_TOKEN, LAN, plain HTTP, every 3 s
+  every 3 s   renders 800x600 1-bit PNG    Bearer KINDLE_TOKEN, LAN, plain HTTP,
+              charts switch every 10 s     1 s after each picture is shown
 ```
 
 ## What the screen shows
@@ -12,19 +13,21 @@ Inverter ──> pv-solar-api (Pi) ──GET /dashboard.png──> Kindle
 - Battery % and a battery outline filled with the last 12 hours of charge, plus a charging or discharging icon
 - Battery-empty time, estimated from sunset and a baseline house load (see [Simple sunset battery estimate](#simple-sunset-battery-estimate)), with today's sunset time below it
 - A grid pylon and export kW, only while exporting
-- Solar production kW (sun icon) and home consumption kW (bolt icon), each with a 12-hour chart
+- Solar production kW (sun icon) and home consumption kW (bolt icon), each with a chart that switches every 10 seconds between:
+  - **power**: the last 12 hours of kW
+  - **today's running total**: kWh since midnight, with the total so far in large white-on-black type at the top right (`6.8k`). The production chart spans daylight only, from an hour before today's sunrise to an hour after sunset (`6a` to `8p` in late September); the consumption chart spans midnight to midnight. The consumption chart also marks **5 am**, when the cheap night rate ends: dashed lines from `5a` on the time axis up to the line and across to the left edge, with the total at 5 am written there (`4.7`). Before 5 am only the upright dashed line is drawn
 - `Updated HH:MM:SS` (Dublin time of the inverter reading), or a **STALE DATA** banner with the last good readings when the inverter stops answering
 
 ## How it works
 
-**API side** (`api/kindle_dashboard/`): `GET /dashboard.png` reuses the `/dashboard` data, renders it with Pillow and the bundled DejaVu fonts, and always answers 200 with a PNG. It only accepts `Authorization: Bearer <KINDLE_TOKEN>`, a read-only token separate from `API_KEY`, so the Kindle cannot control the battery. It only re-draws when a new inverter reading arrives, so polling every few seconds is cheap.
+**API side** (`api/kindle_dashboard/`): `GET /dashboard.png` reuses the `/dashboard` data, renders it with Pillow and the bundled DejaVu fonts, and always answers 200 with a PNG. It only accepts `Authorization: Bearer <KINDLE_TOKEN>`, a read-only token separate from `API_KEY`, so the Kindle cannot control the battery. It picks the charts from the clock (power and today's totals take turns, 10 seconds each) and only re-draws when a new inverter reading arrives, the daytime target changes or the charts switch, so polling every second or two is cheap: a picture takes about 0.11 s of one of the Pi's four cores.
 
-**Kindle side** (this folder): a KOReader plugin started from the KUAL menu. The Kindle is always on mains power, so it stays awake with Wi-Fi on and every 3 seconds (`interval`) it:
+**Kindle side** (this folder): a KOReader plugin started from the KUAL menu. The Kindle is always on mains power, so it stays awake with Wi-Fi on and keeps repeating:
 
-1. downloads the PNG and displays it with a partial e-ink update,
-2. does a full e-ink refresh every 100th picture (`full_refresh_every`) to clear ghosting.
+1. download the PNG and display it with a partial e-ink update (a full e-ink refresh every 100th picture, `full_refresh_every`, to clear ghosting),
+2. wait 1 second (`interval`) once the picture is on screen, then ask again. The Pi decides which charts the picture shows, so the switch every 10 seconds appears within a second or two.
 
-Pictures are written to `/tmp` (RAM), not the Kindle's flash. If a download fails, the previous image stays on screen and the next tick tries again; if Wi-Fi drops, the plugin asks the Kindle to rejoin quietly. Failures are logged only occasionally so KOReader's log stays small.
+Pictures are written to `/tmp` (RAM), not the Kindle's flash. If a download fails, the previous image stays on screen and the plugin tries again every 5 seconds; if Wi-Fi drops, the plugin asks the Kindle to rejoin quietly. Failures are logged only occasionally so KOReader's log stays small.
 
 The Kindle uses the LAN address `http://192.168.0.11:8100/dashboard.png`, not `pv.tenjo.ovh`: the K4 cannot do modern TLS, and the plugin only accepts `http://<IP>:<port>/dashboard.png`.
 
@@ -73,6 +76,33 @@ For the exact live PNG served to the Kindle, use
 The local server forwards authenticated requests to the configured Pi URL;
 the token stays on the server and is never included in the browser page.
 The browser title identifies live mode and refreshes every two seconds.
+
+To try the solar and home charts **alternating with running daily energy totals** with
+real readings, copy `history.sqlite3` and `history.sqlite3-wal` from the Pi's data volume
+(`/var/lib/docker/volumes/pv_pv-data/_data/`, needs `sudo`), set `PV_API_KEY`, and run
+`--live-energy <copied history.sqlite3>` (optionally `--api-url`, default
+`https://pv.tenjo.ovh/`). The server polls the API's `/dashboard` (and the daytime target)
+every 3 seconds and keeps extending the copy, so all charts move live; this test mode is
+not on the Kindle. Like the Kindle, the page asks for the next picture 1 second after each
+one is shown, and the charts switch every 10 seconds by the clock, as on the Pi.
+Each energy chart shows today only, kWh since Dublin midnight: production from an hour
+before sunrise to an hour after sunset (the same local Astral calculation as the sunset under
+the battery-empty time, so it follows the seasons with no web request), consumption midnight
+to midnight (on a daylight-saving day of 23 or 25 hours the hours stay in their real places), on a
+scale of 10, 20, 30... kWh chosen so the line stays in the lower 60% of the chart. Today's
+total sits in that clear top part, large, at the top right (`16.6k`), so it never covers the
+line. The 5 am total is written above its dashed line, where the line (still rising towards
+it) leaves room; a scale label it would overlap is left out. The big numbers above the charts
+are still live power.
+
+- **Solar** adds up the stored solar power and scales today's line to end at today's
+  production from the inverter's counters: its daily yield minus the battery's daily
+  discharge, because the daily yield also counts battery discharge (it keeps rising after
+  sunset while the battery runs the house). At 20:49 on 15 September 2026 that was
+  25.18 − 2.70 = 22.48 kWh, against 22.46 kWh produced in the FusionSolar app.
+- **Home** adds up the stored home power as it is, because the inverter has no daily
+  consumption counter. The cloud seed began at 01:05 on 15 September 2026, so that day's
+  home total misses its first hour; it still came close to the app's 12.63 kWh.
 
 All preview readings and history are mock data. All three charts share a
 12-hour horizontal axis: **now minus 12 hours at the left, now at the right**,

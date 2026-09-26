@@ -1,7 +1,9 @@
 """Pure drawing code for the 800x600 1-bit Kindle solar dashboard."""
 
 import io
+import math
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -14,6 +16,20 @@ WIDTH, HEIGHT = 800, 600
 HISTORY_HOURS = 12
 FLOW_ICON_MIN_KW = 0.1
 FONT_DIR = Path(__file__).parent / "fonts"
+
+
+@dataclass
+class EnergyChart:
+    """Today's running kWh for one chart, drawn instead of the power history over all or part of the day.
+
+    Positions are fractions of the chart's span (outside 0-1 is cut off at the edges) and `hours`
+    label the axis as (fraction, label). `mark` is an optional (fraction, label, total) crosshair;
+    the total is None until that time comes.
+    """
+    samples: Sequence[float]
+    positions: Sequence[float]
+    hours: Sequence[tuple[float, str]]
+    mark: tuple[float, str, float | None] | None = None
 
 
 def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
@@ -238,8 +254,19 @@ def draw_grid_export(draw, center_x, top, export_kw):
     centered(draw, (cx, bottom + 27), f"{export_kw:.1f}k", font(20))
 
 
-def draw_power_history(draw, box, samples: Sequence[float | None], *, scale_max=5.5, guide_kw=3, positions=None):
-    """Draw twelve hours of power strictly within the plot's bounds."""
+def energy_scale(samples: Sequence[float | None]) -> int:
+    """Chart top for running kWh totals: a multiple of 10, at least 10, with the highest total at most
+    60% of the way up, so the line stays clear of the total drawn above it."""
+    highest = max((sample for sample in samples if sample is not None), default=0)
+    return max(10, math.ceil(highest / 6) * 10)
+
+
+def draw_power_history(draw, box, samples: Sequence[float | None], *, scale_max=5.5, guide_kw=3, positions=None,
+                       keep_clear: Sequence[tuple] = ()):
+    """Draw twelve hours of power (or a day of energy) strictly within the plot's bounds.
+
+    A scale label that would overlap one of the `keep_clear` boxes is left out.
+    """
     left, top, right, bottom = box
     for level in (0, guide_kw, scale_max):
         y = round(bottom - level / scale_max * (bottom - top))
@@ -264,8 +291,101 @@ def draw_power_history(draw, box, samples: Sequence[float | None], *, scale_max=
         label = f"{level:g}"
         label_xy = (left + 8, round(bottom - level / scale_max * (bottom - top)) + 7)
         bounds = draw.textbbox(label_xy, label, font=label_font, anchor="lt")
-        draw.rectangle((bounds[0] - 2, bounds[1] - 2, bounds[2] + 2, bounds[3] + 2), fill="white")
+        bounds = (bounds[0] - 2, bounds[1] - 2, bounds[2] + 2, bounds[3] + 2)
+        if any(overlap(bounds, other) for other in keep_clear):
+            continue
+        draw.rectangle(bounds, fill="white")
         draw.text(label_xy, label, font=label_font, anchor="lt", fill="black")
+
+
+def overlap(a, b):
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def draw_dashes(draw, start, end):
+    """A dashed horizontal or vertical line, finer than the target line on the battery."""
+    (x1, y1), (x2, y2) = start, end
+    length = max(abs(x2 - x1), abs(y2 - y1))
+    for offset in range(0, length + 1, 9):
+        a, b = offset / length if length else 0, min(offset + 5, length) / length if length else 0
+        draw.line((x1 + (x2 - x1) * a, y1 + (y2 - y1) * a, x1 + (x2 - x1) * b, y1 + (y2 - y1) * b),
+                  fill="black", width=2)
+
+
+def draw_energy_chart(draw, box, chart: EnergyChart):
+    """Today's running total: its line across the chart's span, the latest total large, the mark if any.
+
+    The mark is a crosshair to read off the total at a set time: a dashed line up from that time
+    on the axis to the line, and across to the left edge, with the total written above it. Before
+    that time only the upright dashed line is drawn. The total goes above its dashed line because a
+    running total only rises: before the mark the line is below it, so that corner is clear.
+    """
+    left, top, right, bottom = box
+    scale_max = energy_scale(chart.samples)
+    label = None
+    if chart.mark is not None:
+        fraction, _, total = chart.mark
+        x = round(left + fraction * (right - left))
+        if total is not None:
+            y = round(bottom - min(max(total, 0), scale_max) / scale_max * (bottom - top))
+            text, face = f"{total:.1f}", font(17, True)
+            tl, tt, tr, tb = draw.textbbox((0, 0), text, font=face, anchor="lb")
+            # On the y axis, but kept left of the upright line
+            text_x = min(left + 6, x - 6 - (tr - tl))
+            label = (text, face, (text_x, y - 5))
+            bounds = draw.textbbox(label[2], text, font=face, anchor="lb")
+            label_box = (bounds[0] - 2, bounds[1] - 2, bounds[2] + 2, bounds[3] + 2)
+    draw_power_history(draw, box, chart.samples, scale_max=scale_max, guide_kw=scale_max / 2,
+                       positions=chart.positions, keep_clear=[label_box] if label else ())
+    if chart.mark is not None:
+        if label:
+            draw_dashes(draw, (x, bottom), (x, y))
+            draw_dashes(draw, (left, y), (x, y))
+            draw.rectangle(label_box, fill="white")
+            draw.text(label[2], label[0], font=label[1], anchor="lb", fill="black")
+        else:
+            draw_dashes(draw, (x, bottom), (x, top))
+    draw_latest_total(draw, box, chart.samples)
+    draw_day_hours(draw, box, chart)
+
+
+def draw_latest_total(draw, box, samples: Sequence[float | None]):
+    """The latest running total, large with a small k, white on a black box at the top right of the chart.
+
+    A daily total rises smoothly, so the line says little and the number carries the chart. White on
+    black sets it apart from the black power reading above it. The energy scale keeps the line in the
+    lower 60%, so the box never covers it.
+    """
+    latest = next((sample for sample in reversed(samples) if sample is not None), None)
+    if latest is None:
+        return
+    _, top, right, _ = box
+    number, number_face = f"{latest:.1f}", font(44, True)
+    unit, unit_face = "k", font(24)  # like the power readings
+    number_left, number_top, number_right, number_bottom = draw.textbbox((0, 0), number, font=number_face,
+                                                                         anchor="ls")
+    unit_left, _, unit_right, _ = draw.textbbox((0, 0), unit, font=unit_face, anchor="ls")
+    # Digits sit on the baseline; their tops start just below the top guide, inside the box's padding.
+    baseline = top + 7 - number_top
+    unit_x = right - 6 - unit_right
+    number_x = unit_x + unit_left - 4 - number_right
+    draw.rounded_rectangle((number_x + number_left - 7, baseline + number_top - 5, right, baseline + number_bottom + 5),
+                           radius=8, fill="black")
+    draw.text((unit_x, baseline), unit, font=unit_face, anchor="ls", fill="white")
+    draw.text((number_x, baseline), number, font=number_face, anchor="ls", fill="white")
+
+
+def draw_day_hours(draw, box, chart: EnergyChart):
+    """Label the energy chart's axis, and the mark's time in bold."""
+    left, _, right, baseline = box
+    for fraction, label in chart.hours:
+        anchor = "lt" if fraction <= 0 else "rt" if fraction >= 1 else "mt"
+        draw.text((round(left + fraction * (right - left)), baseline + 7), label, font=font(17), anchor=anchor,
+                  fill="black")
+    if chart.mark is not None:
+        fraction, label, _ = chart.mark
+        draw.text((round(left + fraction * (right - left)), baseline + 7), label, font=font(17, True),
+                  anchor="mt", fill="black")
 
 
 def draw_history_hours(draw, left, right, baseline, updated_at):
@@ -282,7 +402,7 @@ def draw_history_hours(draw, left, right, baseline, updated_at):
 
 def render(data: dict, updated_at: datetime, stale: bool = False, *,
            history: dict[str, Sequence[float | None]] | None = None, history_positions=None,
-           daytime_target: int = 0) -> Image.Image:
+           daytime_target: int = 0, energy: dict[str, EnergyChart] | None = None) -> Image.Image:
     """Draw the dashboard; every history spans now − HISTORY_HOURS through now.
 
     Samples are ordered oldest to newest; None is a gap. Optional positions
@@ -290,6 +410,8 @@ def render(data: dict, updated_at: datetime, stale: bool = False, *,
     Without positions samples are evenly spaced. `updated_at`
     is shown as-is in the legacy layout, so pass a Dublin-local time.
     A daytime target of 1-100% is marked on the battery; 0 is off.
+    With `energy` ({"pv_kw": ..., "home_kw": ...}) the solar and home charts
+    draw today's running totals, midnight to midnight, instead of power.
     """
     image = Image.new("1", (WIDTH, HEIGHT), 1)
     draw = ImageDraw.Draw(image)
@@ -310,10 +432,14 @@ def render(data: dict, updated_at: datetime, stale: bool = False, *,
         # The chart baselines remain axes; there is no separator between groups.
         for key, offset in (("pv_kw", 0), ("home_kw", 288)):
             chart_bottom = 270 + offset
-            draw_power_history(draw, (522, 148 + offset, 776, chart_bottom), history.get(key, ()),
-                               scale_max=5 if key == "pv_kw" else 3,
-                               guide_kw=2 if key == "pv_kw" else 1, positions=history_positions)
-            draw_history_hours(draw, 522, 776, chart_bottom, updated_at)
+            box = (522, 148 + offset, 776, chart_bottom)
+            if energy is not None:
+                draw_energy_chart(draw, box, energy[key])
+            else:
+                draw_power_history(draw, box, history.get(key, ()),
+                                   scale_max=5 if key == "pv_kw" else 3,
+                                   guide_kw=2 if key == "pv_kw" else 1, positions=history_positions)
+                draw_history_hours(draw, 522, 776, chart_bottom, updated_at)
             # The current reading has its own space above the clipped chart.
             number_top = power_reading(draw, (650, 80 + offset), f"{value(data, key):.1f}")
             if key == "pv_kw":
@@ -387,8 +513,8 @@ def render(data: dict, updated_at: datetime, stale: bool = False, *,
 
 def render_png(data: dict, updated_at: datetime, stale: bool = False, *,
                history: dict[str, Sequence[float | None]] | None = None, history_positions=None,
-               daytime_target: int = 0) -> bytes:
+               daytime_target: int = 0, energy: dict[str, EnergyChart] | None = None) -> bytes:
     output = io.BytesIO()
     render(data, updated_at, stale, history=history, history_positions=history_positions,
-           daytime_target=daytime_target).save(output, format="PNG", optimize=True)
+           daytime_target=daytime_target, energy=energy).save(output, format="PNG", optimize=True)
     return output.getvalue()

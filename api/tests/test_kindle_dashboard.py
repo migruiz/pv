@@ -51,6 +51,8 @@ async def client(monkeypatch, tmp_path):
     monkeypatch.setenv("KINDLE_TOKEN", TOKEN)
     monkeypatch.setattr(kindle_module, "_last_good", None)
     monkeypatch.setattr(kindle_module, "_cached", None)
+    # Power charts unless a test switches them; a real 10 s switch mid-test would redraw
+    monkeypatch.setattr(kindle_module, "charts_at", lambda seconds: "power")
     inverter = FakeInverter()
 
     app = FastAPI()
@@ -199,6 +201,19 @@ class TestDashboardPng:
         store.save(80)
         await ac.get("/dashboard.png", headers=HEADERS)  # same reading, new target
         assert captured == [0, 80]
+
+    async def test_switches_to_todays_energy_charts_and_redraws(self, client, monkeypatch):
+        ac, _ = client
+        captured = []
+        monkeypatch.setattr(kindle_module, "render_png",
+                            lambda *args, **kwargs: captured.append(kwargs["energy"]) or b"png")
+        await ac.get("/dashboard.png", headers=HEADERS)
+        monkeypatch.setattr(kindle_module, "charts_at", lambda seconds: "energy")
+        await ac.get("/dashboard.png", headers=HEADERS)  # same reading, other charts
+        await ac.get("/dashboard.png", headers=HEADERS)
+        assert len(captured) == 2 and captured[0] is None
+        assert captured[1]["home_kw"].mark[1] == "5a"
+        assert captured[1]["home_kw"].samples[-1] == 0  # one reading: nothing added up yet
 
     async def test_returns_uncached_kindle_png(self, client):
         ac, _ = client
