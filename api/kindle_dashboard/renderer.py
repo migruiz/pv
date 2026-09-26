@@ -130,7 +130,8 @@ def draw_battery_trace(draw, box, fill_width, points):
     """Clip the trace to the battery interior and invert it over the charge fill."""
     left, top, right, bottom = box
     trace = Image.new("1", (right - left + 1, bottom - top + 1), 0)
-    draw_trace_segments(ImageDraw.Draw(trace), points, fill=1, width=3, joint="curve")
+    # Over twice the power charts' line, to read from across the room
+    draw_trace_segments(ImageDraw.Draw(trace), points, fill=1, width=7, joint="curve")
     draw_inverted(draw, (left, top), trace, fill_width)
 
 
