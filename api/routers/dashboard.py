@@ -2,11 +2,11 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from auth import require_api_key
+from auth import require_read_access
 from dependencies import get_inverter
 from inverter.reader import InverterUnavailable
 
-router = APIRouter(dependencies=[Depends(require_api_key)])
+router = APIRouter(dependencies=[Depends(require_read_access)])
 
 
 @router.get("/dashboard")

@@ -57,7 +57,7 @@ async def client(monkeypatch, tmp_path):
 
     app = FastAPI()
     app.state.inverter = inverter
-    from kindle_dashboard.history import HistoryStore
+    from history.store import HistoryStore
     store = HistoryStore(tmp_path / 'history.sqlite3')
     store.record(inverter.data)
     app.state.history = store

@@ -1,4 +1,4 @@
-"""Persistent minute history, fed by the existing inverter poller."""
+"""Persistent minute history, fed by the existing inverter poller, for the charts and GET /history."""
 
 import math
 import sqlite3
@@ -101,6 +101,14 @@ class HistoryStore:
                 history[key].append(reading)
             previous = row
         return history, positions
+
+    def samples(self, since):
+        """Every stored minute from the one holding `since` (Unix seconds) on, oldest first:
+        (observed_at, average solar kW, average home kW, latest battery %)."""
+        with self._lock:
+            return self._db.execute(
+                "SELECT observed_at,pv_sum/sample_count,home_sum/sample_count,battery_soc "
+                "FROM samples WHERE minute >= ? ORDER BY minute", (int(since // 60),)).fetchall()
 
     def power(self, key, start_ts, end_ts):
         """(timestamp, average kW) for every stored minute with that power reading."""

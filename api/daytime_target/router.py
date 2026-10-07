@@ -3,11 +3,12 @@
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
-from auth import require_api_key
+from auth import require_api_key, require_read_access
 
 from .controller import DaytimeTargetController, resume_below
 
-router = APIRouter(prefix="/daytime-target", dependencies=[Depends(require_api_key)])
+# Reading it is open to the read-only key (the home's screens mark it); changing it needs the full key
+router = APIRouter(prefix="/daytime-target")
 
 
 class TargetSettings(BaseModel):
@@ -35,12 +36,12 @@ def _controller(request: Request) -> DaytimeTargetController:
     return request.app.state.daytime_target
 
 
-@router.get("", response_model=TargetView)
+@router.get("", response_model=TargetView, dependencies=[Depends(require_read_access)])
 async def get_target(controller: DaytimeTargetController = Depends(_controller)):
     return _view(controller, controller.store.load())
 
 
-@router.put("", response_model=TargetView)
+@router.put("", response_model=TargetView, dependencies=[Depends(require_api_key)])
 async def set_target(settings: TargetSettings, controller: DaytimeTargetController = Depends(_controller)):
     """Save the target. Where spare solar goes is set on the inverter before this returns."""
     error = await controller.save(settings.target_soc)

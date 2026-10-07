@@ -10,6 +10,13 @@ async def require_api_key(x_api_key: str = Header(...)):
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 
+async def require_read_access(x_api_key: str = Header("")):
+    """Readings only: the full API_KEY, or READ_API_KEY, which cannot change anything (the home's screens)."""
+    keys = [os.environ.get("API_KEY", ""), os.environ.get("READ_API_KEY", "")]
+    if not any(key and hmac.compare_digest(x_api_key.encode(), key.encode()) for key in keys):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+
 async def require_kindle_token(authorization: str = Header("")):
     """Read-only Kindle access: `Authorization: Bearer <KINDLE_TOKEN>`, separate from API_KEY."""
     token = os.environ.get("KINDLE_TOKEN", "")

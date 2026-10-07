@@ -38,7 +38,7 @@ pv/
 ├── api/                          # Python FastAPI backend
 │   ├── main.py                   # FastAPI app, lifespan, mock clock endpoints
 │   ├── mock_clock.py             # Dublin clock; virtual in mock mode (set/advance/reset time)
-│   ├── auth.py                   # API key (X-API-Key) and Kindle token (Bearer) authentication
+│   ├── auth.py                   # API key (X-API-Key), read-only key (X-API-Key) and Kindle token (Bearer) authentication
 │   ├── config.py                 # Shared constants (MOCK_MODE, inverter address, poll interval)
 │   ├── notifications.py          # Firebase Cloud Messaging push notifications
 │   ├── dependencies.py           # FastAPI dependency injection
@@ -58,6 +58,9 @@ pv/
 │   │   ├── store.py              # JSON file I/O (atomic writes)
 │   │   ├── controller.py         # Spare solar to the battery or the grid; TOU back on for the night charge
 │   │   └── router.py             # /daytime-target endpoints
+│   ├── history/                  # Minute-by-minute history, fed by the inverter poller
+│   │   ├── store.py              # SQLite store: solar and home kW averaged per minute, latest battery %, 30 days
+│   │   └── router.py             # GET /history (read-only key)
 │   ├── routers/                  # Other API routers
 │   │   ├── dashboard.py          # Dashboard endpoint
 │   │   └── health.py             # Health check
@@ -73,7 +76,8 @@ pv/
 │   │   ├── test_discharge_api.py         # /discharge-windows HTTP endpoints
 │   │   ├── test_daytime_target.py        # Spare-solar rule, window priority, night-charge TOU check, /daytime-target
 │   │   ├── test_inverter.py              # Inverter reader, commands, register mapping, /dashboard
-│   │   └── test_kindle_*.py              # Kindle PNG renderer, estimate and history
+│   │   ├── test_history.py               # History store and GET /history
+│   │   └── test_kindle_*.py              # Kindle PNG renderer, estimate and daily energy
 │   ├── Dockerfile                # Multi-arch image (amd64 + arm64)
 │   ├── docker-compose.yml        # Local dev deployment
 │   ├── pyproject.toml            # uv project dependencies
@@ -111,19 +115,20 @@ pv/
 
 ## API Endpoints
 
-All endpoints except `/health` and `/docs` require `X-API-Key` header. `/dashboard.png` uses `Authorization: Bearer <KINDLE_TOKEN>` instead.
+All endpoints except `/health` and `/docs` require the `X-API-Key` header. The readings (`GET /dashboard`, `GET /history`, `GET /daytime-target`) also take the read-only key, `READ_API_KEY`, which cannot change anything: the home's screens (the iPad, the tablets and the Kindles, in `C:/repos/home-assistant`) use it. `/dashboard.png` uses `Authorization: Bearer <KINDLE_TOKEN>` instead.
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Age of the last inverter reading (no auth) |
 | GET | `/docs` | Swagger UI |
-| GET | `/dashboard` | Combined: PV, battery, grid, home power + flow directions + inverter settings + where spare solar goes (`spare_solar_to_battery`), read from the inverter every 3 s (503 if no reading in 30 s) |
+| GET | `/dashboard` | (read-only key too) Combined: PV, battery, grid, home power + flow directions + inverter settings + where spare solar goes (`spare_solar_to_battery`), read from the inverter every 3 s (503 if no reading in 30 s) |
+| GET | `/history` | (read-only key too) Every stored minute from `?since=` (Unix seconds; default 12 hours ago, at most 48), oldest first: `{minutes: [{observed_at, pv_kw, home_kw, battery_soc}]}`, power averaged over the minute, battery % its latest |
 | GET | `/dashboard.png` | Kindle e-ink dashboard, 800x600 1-bit PNG (Bearer `KINDLE_TOKEN`, always 200) |
 | GET | `/discharge-windows` | All windows by start time, each with its live `state` (discharging, power, battery %, time left, target reached) |
 | POST | `/discharge-windows` | Create a window; applied before the reply (409 with the reason on overlap; `warning` if the inverter did not respond) |
 | PUT | `/discharge-windows/{id}` | Replace a window's settings; applied before the reply, also to a running discharge (`warning` as for POST) |
 | DELETE | `/discharge-windows/{id}` | Delete a window; a discharge it was running stops first (502, window kept, if the stop fails) |
-| GET | `/daytime-target` | The daytime target, the % at which charging resumes (`resume_below`), and whether a discharge window is holding it back (`window_running`) |
+| GET | `/daytime-target` | (read-only key too) The daytime target, the % at which charging resumes (`resume_below`), and whether a discharge window is holding it back (`window_running`) |
 | PUT | `/daytime-target` | Set the target `{"target_soc": 80}` (0-100); applied before the reply (`warning` if the inverter did not respond) |
 
 ### Mock-Only Endpoints (when MOCK_MODE=true)
@@ -312,7 +317,7 @@ cd app && ./gradlew assembleRelease -x lintVitalRelease -x lintVitalAnalyzeRelea
 - **Public URL**: `https://pv.tenjo.ovh` (Cloudflare tunnel)
 - **Discharge windows config**: Persisted to `/data/discharge_windows.json` volume
 - **Daytime target**: `/data/daytime_target.json` volume
-- **Chart history**: `/data/history.sqlite3` volume (Kindle charts)
+- **History**: `/data/history.sqlite3` volume (`GET /history`, Kindle charts)
 - **Portainer stack**: `pv` (compose at `/data/compose/68/docker-compose.yml` in the `portainer_data` volume); env vars are inline in the stack file
 - **Inverter link**: the Pi's `wlan0` joins the inverter hotspot `SUN2000-TA2550448190` (NetworkManager connection `inverter-hotspot`: autoconnect with unlimited retries, `ipv4.never-default` so internet stays on `eth0`), and `wifi-radio-on.service` switches the radio on at boot. The inverter (SUN2000-5K-LB0, built-in WLAN, no Smart Dongle) answers one local Modbus session at a time, so the FusionSolar app's local screens cannot connect while the API is polling
 - **Kindle dashboard**: Kindle polls `http://192.168.0.11:8100/dashboard.png` on the LAN, 1 s after each picture is shown; install/update the plugin with `python kindle/install.py` over USB
@@ -325,8 +330,9 @@ cd app && ./gradlew assembleRelease -x lintVitalRelease -x lintVitalAnalyzeRelea
 | INVERTER_INSTALLER_PASS | Yes | Installer password for the inverter's local Modbus login (provided by the installer) |
 | INVERTER_HOST / INVERTER_PORT | No | Inverter hotspot address, default `192.168.8.1` / `6607` |
 | INVERTER_POLL_INTERVAL | No | Seconds between inverter reads, default `3` |
+| READ_API_KEY | No | Read-only key for the home's screens: `GET /dashboard`, `/history` and `/daytime-target` with `X-API-Key`; nothing else. Unset: only `API_KEY` reads them |
 | KINDLE_TOKEN | No | Read-only Bearer token for the Kindle's `/dashboard.png`; endpoint returns 401 when unset |
-| HISTORY_DB_PATH | No | Chart history database, default `/data/history.sqlite3` |
+| HISTORY_DB_PATH | No | History database (`GET /history`, Kindle charts), default `/data/history.sqlite3` |
 | MOCK_MODE | No | Set to `1`/`true`/`yes` to use the mock simulator instead of the inverter |
 | MOCK_URL | No | Mock simulator URL (default: `http://localhost:3002`) |
 

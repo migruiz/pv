@@ -387,6 +387,19 @@ class TestDashboardEndpoint:
         ac, reader = api
         await reader.step()
         assert (await ac.get("/dashboard", headers={"X-API-Key": "wrong"})).status_code == 401
+        assert (await ac.get("/dashboard")).status_code == 401
+
+    async def test_read_only_key_reads_it(self, api, monkeypatch):
+        ac, reader = api
+        await reader.step()
+        monkeypatch.setenv("READ_API_KEY", "read-key")
+        assert (await ac.get("/dashboard", headers={"X-API-Key": "read-key"})).status_code == 200
+
+    async def test_unset_read_only_key_opens_nothing(self, api, monkeypatch):
+        ac, reader = api
+        await reader.step()
+        monkeypatch.delenv("READ_API_KEY", raising=False)
+        assert (await ac.get("/dashboard", headers={"X-API-Key": ""})).status_code == 401
 
     async def test_serves_the_latest_reading(self, api):
         ac, reader = api

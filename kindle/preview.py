@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "api"))
 
 from kindle_dashboard.daily_energy import chart_history, charts_at
-from kindle_dashboard.history import HistoryStore
+from history.store import HistoryStore
 from kindle_dashboard.renderer import HISTORY_HOURS, render_png
 
 

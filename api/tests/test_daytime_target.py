@@ -230,6 +230,14 @@ async def test_wrong_api_key_is_rejected(api):
     assert (await api.get("/daytime-target", headers={"X-API-Key": "wrong"})).status_code == 401
 
 
+async def test_read_only_key_reads_the_target_but_cannot_change_it(api, monkeypatch, controller):
+    monkeypatch.setenv("READ_API_KEY", "read-key")
+    read_only = {"X-API-Key": "read-key"}
+    assert (await api.get("/daytime-target", headers=read_only)).json()["target_soc"] == 0
+    assert (await api.put("/daytime-target", json={"target_soc": 80}, headers=read_only)).status_code == 401
+    assert controller.store.load() == 0
+
+
 async def test_get_and_set(api, inverter):
     assert (await api.get("/daytime-target")).json() == {
         "target_soc": 0, "resume_below": 0, "window_running": False, "warning": None,

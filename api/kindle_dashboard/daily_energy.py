@@ -4,7 +4,7 @@ from bisect import bisect_right
 from datetime import datetime, time, timedelta
 
 from kindle_dashboard.estimate import DUBLIN, daylight
-from kindle_dashboard.history import finite
+from history.store import finite
 from kindle_dashboard.renderer import EnergyChart
 
 # The solar and home charts take turns: power for 10 s, then today's running totals for 10 s

@@ -26,6 +26,7 @@ COPY main.py auth.py config.py dependencies.py notifications.py mock_clock.py ./
 COPY discharge/ discharge/
 COPY daytime_target/ daytime_target/
 COPY routers/ routers/
+COPY history/ history/
 COPY kindle_dashboard/ kindle_dashboard/
 COPY inverter/ inverter/
 RUN uv sync --frozen --no-dev

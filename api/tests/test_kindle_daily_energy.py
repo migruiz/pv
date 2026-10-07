@@ -10,7 +10,7 @@ from kindle_dashboard import renderer
 from kindle_dashboard.daily_energy import (chart_history, charts_at, energy_chart, running_totals,
                                            solar_today_kwh, values_at)
 from kindle_dashboard.estimate import daylight
-from kindle_dashboard.history import HistoryStore
+from history.store import HistoryStore
 
 NOW = datetime(2026, 9, 15, 12, 0, tzinfo=timezone.utc)  # 13:00 in Dublin
 MIDNIGHT = datetime(2026, 9, 14, 23, 0, tzinfo=timezone.utc).timestamp()  # Dublin midnight
