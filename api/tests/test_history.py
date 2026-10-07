@@ -1,4 +1,4 @@
-"""Persistence and real-time chart boundaries."""
+"""The minute history: what is recorded, kept and served by GET /history."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -24,9 +24,7 @@ def test_every_poll_averages_power_and_keeps_latest_soc(store):
     store.record(reading())
     store.record(reading(NOW + timedelta(seconds=3), pv=4, home=0.75, soc=74))
     store.record(reading())  # duplicate/out-of-order doesn't dilute the average
-    history, positions = store.chart(NOW + timedelta(seconds=3), {})
-    assert history == {'pv_kw': [3], 'home_kw': [0.5], 'battery_soc': [74]}
-    assert positions == [1]
+    assert store.samples(0) == [((NOW + timedelta(seconds=3)).timestamp(), 3, 0.5, 74)]
     assert store.status()['minutes'] == 1
 
 
@@ -46,21 +44,12 @@ def test_retention_prunes_old_history(store):
     assert store.status()['minutes'] == 1
 
 
-def test_true_timestamps_gaps_and_current_endpoint(store):
+def test_minutes_keep_their_true_times_and_an_outage_stays_missing(store):
     start = NOW - timedelta(hours=12)
     for m in (0, 1, 20):
-        store.record(reading(start + timedelta(minutes=m)))
-    history, positions = store.chart(NOW, reading())
-    assert positions[0] == 0
-    assert positions[1] == pytest.approx(1 / 720)
-    assert positions[-1] == 1
-    assert history['pv_kw'] == [2, 2, None, 2, None, 2]
-
-
-def test_local_outage_is_not_drawn_as_continuous(store):
-    store.record(reading(NOW - timedelta(minutes=2)))
-    history, _ = store.chart(NOW, reading())
-    assert history['battery_soc'] == [73, None, 73]
+        store.record(reading(start + timedelta(minutes=m, seconds=7)))
+    assert [at for at, *_ in store.samples(0)] == [
+        (start + timedelta(minutes=m, seconds=7)).timestamp() for m in (0, 1, 20)]
 
 
 def test_invalid_readings_are_not_recorded(store):

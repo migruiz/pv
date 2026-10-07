@@ -16,9 +16,3 @@ async def require_read_access(x_api_key: str = Header("")):
     if not any(key and hmac.compare_digest(x_api_key.encode(), key.encode()) for key in keys):
         raise HTTPException(status_code=401, detail="Invalid API key")
 
-
-async def require_kindle_token(authorization: str = Header("")):
-    """Read-only Kindle access: `Authorization: Bearer <KINDLE_TOKEN>`, separate from API_KEY."""
-    token = os.environ.get("KINDLE_TOKEN", "")
-    if not token or not hmac.compare_digest(authorization.encode(), f"Bearer {token}".encode()):
-        raise HTTPException(status_code=401, detail="Invalid Kindle token")

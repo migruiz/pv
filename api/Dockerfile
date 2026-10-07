@@ -14,7 +14,7 @@ WORKDIR /app
 RUN groupadd --gid 1000 app \
  && useradd  --uid 1000 --gid app --shell /bin/sh --create-home app
 
-# Persistent data directory: windows, chart history, firebase SA key
+# Persistent data directory: windows, daytime target, minute history, firebase SA key
 RUN mkdir -p /data && chown app:app /data
 
 # --- Dependency layer (cached unless pyproject.toml/uv.lock change) ---
@@ -27,7 +27,6 @@ COPY discharge/ discharge/
 COPY daytime_target/ daytime_target/
 COPY routers/ routers/
 COPY history/ history/
-COPY kindle_dashboard/ kindle_dashboard/
 COPY inverter/ inverter/
 RUN uv sync --frozen --no-dev
 

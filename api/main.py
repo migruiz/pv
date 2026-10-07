@@ -25,7 +25,6 @@ from discharge.store import WindowStore
 from inverter.reader import InverterReader
 from history.router import router as history_router
 from history.store import HistoryStore
-from kindle_dashboard.router import router as kindle_router
 from routers import dashboard, health
 
 load_dotenv()
@@ -97,7 +96,6 @@ app = FastAPI(title="PV Solar API", lifespan=lifespan)
 app.include_router(health.router)
 app.include_router(dashboard.router)
 app.include_router(history_router)
-app.include_router(kindle_router)
 app.include_router(discharge_router)
 app.include_router(daytime_target_router)
 

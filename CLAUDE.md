@@ -15,7 +15,7 @@ Home solar PV monitoring, battery discharge windows and a daytime battery target
 - **API** (`api/`): FastAPI service. Readings and battery commands go straight to the inverter over its WiFi hotspot (Modbus TCP, polled every 3 s). The API does not use the FusionSolar cloud; the FusionSolar app and portal keep working on their own
 - **App** (`app/`): Android Kotlin/Jetpack Compose mobile app with live energy flow dashboard, the daytime battery target and discharge windows
 - **Mock** (`mock/`): Node.js/TypeScript solar system simulator with React UI, standing in for the inverter in development
-- **Kindle** (`kindle/`): KOReader plugin for a jailbroken Kindle 4 that shows an e-ink dashboard PNG rendered by the API (`GET /dashboard.png`)
+- **The home's screens** (in `C:/repos/home-assistant`, not here): the two Kindles' picture service reads `/dashboard`, `/history` and `/daytime-target` with the read-only key (the picture was drawn here until October 2026); the kitchen iPad and the tablets read `/dashboard` through the screens' nginx, which still sends `API_KEY`
 - **Deployment**: Docker container on Raspberry Pi 4 (arm64), exposed via Cloudflare tunnel at `https://pv.tenjo.ovh`
 
 ## Plant Details
@@ -38,7 +38,7 @@ pv/
 ├── api/                          # Python FastAPI backend
 │   ├── main.py                   # FastAPI app, lifespan, mock clock endpoints
 │   ├── mock_clock.py             # Dublin clock; virtual in mock mode (set/advance/reset time)
-│   ├── auth.py                   # API key (X-API-Key), read-only key (X-API-Key) and Kindle token (Bearer) authentication
+│   ├── auth.py                   # API key and read-only key (both X-API-Key) authentication
 │   ├── config.py                 # Shared constants (MOCK_MODE, inverter address, poll interval)
 │   ├── notifications.py          # Firebase Cloud Messaging push notifications
 │   ├── dependencies.py           # FastAPI dependency injection
@@ -64,10 +64,6 @@ pv/
 │   ├── routers/                  # Other API routers
 │   │   ├── dashboard.py          # Dashboard endpoint
 │   │   └── health.py             # Health check
-│   ├── kindle_dashboard/         # Kindle e-ink dashboard
-│   │   ├── renderer.py           # 800x600 1-bit PNG drawing (pure functions, bundled DejaVu fonts)
-│   │   ├── daily_energy.py       # Today's running kWh charts, the 5 am mark, the 10 s power/energy switch
-│   │   └── router.py             # GET /dashboard.png (Bearer KINDLE_TOKEN, stale-data fallback)
 │   ├── tests/                    # Pytest test suite
 │   │   ├── conftest.py           # Shared fixtures (mock clock reset)
 │   │   ├── discharge_fakes.py    # Settable clock, fake inverter (battery %, mode, spare solar) recording commands, notification capture
@@ -76,8 +72,7 @@ pv/
 │   │   ├── test_discharge_api.py         # /discharge-windows HTTP endpoints
 │   │   ├── test_daytime_target.py        # Spare-solar rule, window priority, night-charge TOU check, /daytime-target
 │   │   ├── test_inverter.py              # Inverter reader, commands, register mapping, /dashboard
-│   │   ├── test_history.py               # History store and GET /history
-│   │   └── test_kindle_*.py              # Kindle PNG renderer, estimate and daily energy
+│   │   └── test_history.py               # History store and GET /history
 │   ├── Dockerfile                # Multi-arch image (amd64 + arm64)
 │   ├── docker-compose.yml        # Local dev deployment
 │   ├── pyproject.toml            # uv project dependencies
@@ -89,12 +84,6 @@ pv/
 │   │   ├── routes.ts             # UI state endpoints + inverter registers for the API
 │   │   └── state.ts              # In-memory simulator (SOC, energy balance, spare solar charging, command log)
 │   └── src/                      # React UI (Vite, port 5173)
-│
-├── kindle/                       # Kindle 4 e-ink dashboard (see kindle/README.md)
-│   ├── koreader/plugins/solardashboard.koplugin/  # KOReader plugin: fetch + display, 1 s after each picture (mains power)
-│   ├── extensions/solar-dashboard/                # KUAL menu launcher
-│   ├── install.py                # USB installer (config + token from gitignored JSON)
-│   └── tests/                    # Plugin tests (LuaJIT via lupa)
 │
 └── app/                          # Android mobile app (Kotlin/Compose)
     ├── app/src/main/java/ovh/tenjo/pv/
@@ -115,7 +104,7 @@ pv/
 
 ## API Endpoints
 
-All endpoints except `/health` and `/docs` require the `X-API-Key` header. The readings (`GET /dashboard`, `GET /history`, `GET /daytime-target`) also take the read-only key, `READ_API_KEY`, which cannot change anything: the home's screens (the iPad, the tablets and the Kindles, in `C:/repos/home-assistant`) use it. `/dashboard.png` uses `Authorization: Bearer <KINDLE_TOKEN>` instead.
+All endpoints except `/health` and `/docs` require the `X-API-Key` header. The readings (`GET /dashboard`, `GET /history`, `GET /daytime-target`) also take the read-only key, `READ_API_KEY`, which cannot change anything: the Kindles' picture service in `C:/repos/home-assistant` uses it.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -123,7 +112,6 @@ All endpoints except `/health` and `/docs` require the `X-API-Key` header. The r
 | GET | `/docs` | Swagger UI |
 | GET | `/dashboard` | (read-only key too) Combined: PV, battery, grid, home power + flow directions + inverter settings + where spare solar goes (`spare_solar_to_battery`), read from the inverter every 3 s (503 if no reading in 30 s) |
 | GET | `/history` | (read-only key too) Every stored minute from `?since=` (Unix seconds; default 12 hours ago, at most 48), oldest first: `{minutes: [{observed_at, pv_kw, home_kw, battery_soc}]}`, power averaged over the minute, battery % its latest |
-| GET | `/dashboard.png` | Kindle e-ink dashboard, 800x600 1-bit PNG (Bearer `KINDLE_TOKEN`, always 200) |
 | GET | `/discharge-windows` | All windows by start time, each with its live `state` (discharging, power, battery %, time left, target reached) |
 | POST | `/discharge-windows` | Create a window; applied before the reply (409 with the reason on overlap; `warning` if the inverter did not respond) |
 | PUT | `/discharge-windows/{id}` | Replace a window's settings; applied before the reply, also to a running discharge (`warning` as for POST) |
@@ -201,15 +189,6 @@ Read and written with the `huawei-solar` library over the installer session. The
 | `storage_excess_pv_energy_use_in_tou` | TOU's spare solar: 0 = fed to grid, 1 = charge the battery; set by the daytime target, read with the settings |
 | `storage_working_mode_settings` | Operation mode (5 = TOU); written back to TOU only between 02:00 and 05:00, and only if it is not TOU |
 
-## Kindle Dashboard
-
-A jailbroken Kindle 4 (non-touch) shows an e-ink dashboard: battery % with 12 hours of charge history inside the battery outline, the battery's charge or discharge kW by its icon (above the bolt, below the arrow; none under 0.1 kW), the daytime target as a dashed vertical line inside the battery where the fill has to reach, its value at the foot (none when the target is off), battery-empty time (estimated from sunset and a 0.25 kW baseline load, `kindle_dashboard/estimate.py`) with today's sunset time, grid export kW while exporting, solar kW and home kW each with a chart, and `Updated HH:MM:SS` (Dublin time of the inverter reading). The two charts switch every 10 s, by the Pi's clock, between the last 12 hours of kW and today's running total (kWh since midnight, the total so far large, white on a black box, at the top right as `6.8k`; production drawn from an hour before today's sunrise to an hour after sunset, consumption midnight to midnight); today's home total also marks 5 am, when the cheap night rate ends, with dashed lines and the total at 5 am (`kindle_dashboard/daily_energy.py`). Full device and install docs: `kindle/README.md`.
-
-- **API** (`api/kindle_dashboard/`): `GET /dashboard.png` uses the inverter reader's cached dashboard, renders an 800x600 1-bit PNG with Pillow and bundled DejaVu fonts (in a thread, only when a new reading arrives, the daytime target changes or the charts switch; about 0.11 s on the Pi), and always returns 200. When the inverter reading goes stale it redraws the last good readings with a **STALE DATA** banner
-- **Auth**: `Authorization: Bearer <KINDLE_TOKEN>`, a read-only token separate from `API_KEY`. Unset `KINDLE_TOKEN` disables the endpoint (401)
-- **Kindle** (`kindle/`): KOReader plugin started from KUAL. The Kindle stays on mains power with Wi-Fi on: it downloads the PNG, shows it (partial e-ink update, full flash every 100 pictures), waits 1 s once it is on screen and asks again (every 5 s after a failure). Pictures go to `/tmp` (RAM), not flash
-- **Address**: the Kindle uses `http://192.168.0.11:8100/dashboard.png` on the LAN. The K4 cannot do modern TLS, and the plugin only accepts `http://<IP>:<port>/dashboard.png`
-
 ## Development
 
 ### Mock System + API (full local dev)
@@ -251,8 +230,6 @@ curl -X POST http://localhost:8000/mock/time/reset
 cd api
 uv run --with pytest --with pytest-asyncio --with httpx python -m pytest tests/ -q
 ```
-
-Kindle plugin tests (from repo root): `uv run --no-project --with lupa python -m unittest discover -s kindle/tests -v`
 
 Tests run in about 2 seconds with no external dependencies (no Node.js mock, no Firebase, no network). The discharge and daytime target tests use:
 
@@ -317,10 +294,9 @@ cd app && ./gradlew assembleRelease -x lintVitalRelease -x lintVitalAnalyzeRelea
 - **Public URL**: `https://pv.tenjo.ovh` (Cloudflare tunnel)
 - **Discharge windows config**: Persisted to `/data/discharge_windows.json` volume
 - **Daytime target**: `/data/daytime_target.json` volume
-- **History**: `/data/history.sqlite3` volume (`GET /history`, Kindle charts)
+- **History**: `/data/history.sqlite3` volume (`GET /history`)
 - **Portainer stack**: `pv` (compose at `/data/compose/68/docker-compose.yml` in the `portainer_data` volume); env vars are inline in the stack file
 - **Inverter link**: the Pi's `wlan0` joins the inverter hotspot `SUN2000-TA2550448190` (NetworkManager connection `inverter-hotspot`: autoconnect with unlimited retries, `ipv4.never-default` so internet stays on `eth0`), and `wifi-radio-on.service` switches the radio on at boot. The inverter (SUN2000-5K-LB0, built-in WLAN, no Smart Dongle) answers one local Modbus session at a time, so the FusionSolar app's local screens cannot connect while the API is polling
-- **Kindle dashboard**: Kindle polls `http://192.168.0.11:8100/dashboard.png` on the LAN, 1 s after each picture is shown; install/update the plugin with `python kindle/install.py` over USB
 
 ## Environment Variables
 
@@ -331,14 +307,13 @@ cd app && ./gradlew assembleRelease -x lintVitalRelease -x lintVitalAnalyzeRelea
 | INVERTER_HOST / INVERTER_PORT | No | Inverter hotspot address, default `192.168.8.1` / `6607` |
 | INVERTER_POLL_INTERVAL | No | Seconds between inverter reads, default `3` |
 | READ_API_KEY | No | Read-only key for the home's screens: `GET /dashboard`, `/history` and `/daytime-target` with `X-API-Key`; nothing else. Unset: only `API_KEY` reads them |
-| KINDLE_TOKEN | No | Read-only Bearer token for the Kindle's `/dashboard.png`; endpoint returns 401 when unset |
-| HISTORY_DB_PATH | No | History database (`GET /history`, Kindle charts), default `/data/history.sqlite3` |
+| HISTORY_DB_PATH | No | History database (`GET /history`), default `/data/history.sqlite3` |
 | MOCK_MODE | No | Set to `1`/`true`/`yes` to use the mock simulator instead of the inverter |
 | MOCK_URL | No | Mock simulator URL (default: `http://localhost:3002`) |
 
 ## Key Design Decisions
 
-- **Everything local**: `inverter/reader.py` keeps one Modbus session to the inverter hotspot (`192.168.8.1:6607`, `installer` login via `huawei-solar`), polls every 3 s and caches the result; `/dashboard` and `/dashboard.png` only read the cache, so clients can poll as often as they like. Settings and the lifetime total are re-read every 10th round. Battery commands (`write()`) go over the same session between two reading rounds, under a lock. A rejected password stops polling (retries would lock logins for ~10 min), and failures are logged sparingly (first, then every 100th). The lifetime `total_energy_kwh` is the inverter's own counter, about 1,019 kWh above FusionSolar's plant total. Trade-off: if the hotspot link drops, both readings and control stop; the discharge command's own period is the safety net
+- **Everything local**: `inverter/reader.py` keeps one Modbus session to the inverter hotspot (`192.168.8.1:6607`, `installer` login via `huawei-solar`), polls every 3 s and caches the result; `/dashboard` only reads the cache, so clients can poll as often as they like. Settings and the lifetime total are re-read every 10th round. Battery commands (`write()`) go over the same session between two reading rounds, under a lock. A rejected password stops polling (retries would lock logins for ~10 min), and failures are logged sparingly (first, then every 100th). The lifetime `total_energy_kwh` is the inverter's own counter, about 1,019 kWh above FusionSolar's plant total. Trade-off: if the hotspot link drops, both readings and control stop; the discharge command's own period is the safety net
 - **Saved windows are the only instruction**: one controller applies one rule, with no per-window tasks, no "launched" bookkeeping and no state files. After a restart the next check applies the rule again
 - **Discharge windows** use a JSON config file on the Docker volume, not a database, written atomically (write tmp + rename). An unreadable file raises instead of being treated as empty, so a save can never wipe the windows
 - **TOU schedule is left alone**: the API never writes the TOU periods. It writes only TOU's spare-solar setting (daytime target) and, during the night charge, the operation mode back to TOU; a forced discharge overrides TOU while it runs, and the inverter goes back to the schedule by itself

@@ -40,7 +40,7 @@ def _kw(watts: float) -> float:
 
 
 def to_dashboard(values: dict) -> dict:
-    """Map raw register values to the /dashboard fields the Android app and Kindle expect."""
+    """Map raw register values to the /dashboard fields the Android app and the home's screens expect."""
     v = {**SLOW_DEFAULTS, **values}
     battery_w = _number(v["storage_charge_discharge_power"])
     meter_w = _number(v["power_meter_active_power"])

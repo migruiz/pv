@@ -1,7 +1,7 @@
 """Background reader that polls the inverter over its WiFi hotspot and caches the latest readings.
 
-A single Modbus session serves every client: /dashboard and the Kindle's /dashboard.png only read
-the cache, so the load on the inverter stays the same however often the app or the Kindle refresh.
+A single Modbus session serves every client: /dashboard only reads the cache, so the load on the
+inverter stays the same however often the app or the home's screens refresh.
 The inverter answers one local session at a time, so battery commands (write) go over this same
 session, between two reading rounds.
 """
