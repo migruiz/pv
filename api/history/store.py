@@ -64,13 +64,24 @@ class HistoryStore:
                 self._db.execute("DELETE FROM samples WHERE minute < ?", (int((stamp - RETENTION_SECONDS) // 60),))
                 self._last_prune = stamp
 
-    def samples(self, since):
+    def samples(self, since, step=1):
         """Every stored minute from the one holding `since` (Unix seconds) on, oldest first:
-        (observed_at, average solar kW, average home kW, latest battery %)."""
+        (observed_at, average solar kW, average home kW, latest battery %).
+
+        With `step` > 1, one row per `step` minutes (counted from the epoch, from the step holding
+        `since`) that has any: its minutes' average power, and the latest minute's battery % and time."""
+        first = int(since // 60)
         with self._lock:
-            return self._db.execute(
-                "SELECT observed_at,pv_sum/sample_count,home_sum/sample_count,battery_soc "
-                "FROM samples WHERE minute >= ? ORDER BY minute", (int(since // 60),)).fetchall()
+            if step <= 1:
+                return self._db.execute(
+                    "SELECT observed_at,pv_sum/sample_count,home_sum/sample_count,battery_soc "
+                    "FROM samples WHERE minute >= ? ORDER BY minute", (first,)).fetchall()
+            # SQLite takes the bare observed_at and battery_soc from the row holding max(minute).
+            rows = self._db.execute(
+                "SELECT max(minute),observed_at,avg(pv_sum/sample_count),avg(home_sum/sample_count),battery_soc "
+                "FROM samples WHERE minute >= ? GROUP BY minute/? ORDER BY minute/?",
+                (first - first % step, step, step)).fetchall()
+            return [row[1:] for row in rows]
 
     def status(self):
         with self._lock:

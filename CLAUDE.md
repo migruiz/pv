@@ -15,7 +15,7 @@ Home solar PV monitoring, battery discharge windows and a daytime battery target
 - **API** (`api/`): FastAPI service. Readings and battery commands go straight to the inverter over its WiFi hotspot (Modbus TCP, polled every 3 s). The API does not use the FusionSolar cloud; the FusionSolar app and portal keep working on their own
 - **App** (`app/`): Android Kotlin/Jetpack Compose mobile app with live energy flow dashboard, the daytime battery target and discharge windows
 - **Mock** (`mock/`): Node.js/TypeScript solar system simulator with React UI, standing in for the inverter in development
-- **The home's screens** (in `C:/repos/home-assistant`, not here): the two Kindles' picture service reads `/dashboard`, `/history` and `/daytime-target` with the read-only key (the picture was drawn here until October 2026); the kitchen iPad and the tablets read `/dashboard` through the screens' nginx, which still sends `API_KEY`
+- **The home's screens** (in `C:/repos/home-assistant`, not here): the two Kindles' picture service reads `/dashboard`, `/history` and `/daytime-target` with the read-only key (the picture was drawn here until October 2026); the kitchen iPad and the tablets read `/dashboard` and, for their solar history screen, `/history?step=5` through the screens' nginx
 - **Deployment**: Docker container on Raspberry Pi 4 (arm64), exposed via Cloudflare tunnel at `https://pv.tenjo.ovh`
 
 ## Plant Details
@@ -111,7 +111,7 @@ All endpoints except `/health` and `/docs` require the `X-API-Key` header. The r
 | GET | `/health` | Age of the last inverter reading (no auth) |
 | GET | `/docs` | Swagger UI |
 | GET | `/dashboard` | (read-only key too) Combined: PV, battery, grid, home power + flow directions + inverter settings + where spare solar goes (`spare_solar_to_battery`), read from the inverter every 3 s (503 if no reading in 30 s) |
-| GET | `/history` | (read-only key too) Every stored minute from `?since=` (Unix seconds; default 12 hours ago, at most 48), oldest first: `{minutes: [{observed_at, pv_kw, home_kw, battery_soc}]}`, power averaged over the minute, battery % its latest |
+| GET | `/history` | (read-only key too) Every stored minute from `?since=` (Unix seconds; default 12 hours ago, at most 8 days), oldest first: `{minutes: [{observed_at, pv_kw, home_kw, battery_soc}]}`, power averaged over the minute, battery % its latest. `?step=5` (1 to 60 minutes) gives one entry per 5 minutes instead, power averaged over its minutes: the kitchen screens' week, about 2,300 entries |
 | GET | `/discharge-windows` | All windows by start time, each with its live `state` (discharging, power, battery %, time left, target reached) |
 | POST | `/discharge-windows` | Create a window; applied before the reply (409 with the reason on overlap; `warning` if the inverter did not respond) |
 | PUT | `/discharge-windows/{id}` | Replace a window's settings; applied before the reply, also to a running discharge (`warning` as for POST) |

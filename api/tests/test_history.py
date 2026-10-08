@@ -103,9 +103,40 @@ async def test_history_since_a_time(api, store):
     assert len((await api.get("/history")).json()["minutes"]) == 2  # the last 12 hours
 
 
-async def test_history_goes_back_48_hours_at_most(api, store):
+async def test_history_goes_back_8_days_at_most(api, store):
     now = datetime.now(timezone.utc)
-    store.record(reading(now - timedelta(hours=49)))
-    store.record(reading(now - timedelta(hours=47)))
+    store.record(reading(now - timedelta(days=8, hours=1)))
+    store.record(reading(now - timedelta(days=7, hours=23)))
     assert len((await api.get("/history", params={"since": 0})).json()["minutes"]) == 1
     assert (await api.get("/history", params={"since": "inf"})).json() == {"minutes": []}
+
+
+def test_steps_average_their_minutes_and_keep_the_latest_battery(store):
+    start = NOW.replace(minute=5)  # a 5-minute boundary
+    store.record(reading(start + timedelta(minutes=0, seconds=10), pv=1, home=0.5, soc=70))
+    store.record(reading(start + timedelta(minutes=0, seconds=40), pv=3, home=0.5, soc=70))  # minute averages 2
+    store.record(reading(start + timedelta(minutes=3, seconds=20), pv=4, home=1.5, soc=71))
+    store.record(reading(start + timedelta(minutes=5, seconds=5), pv=6, home=0.2, soc=72))  # the next step
+    assert store.samples(0, 5) == [
+        ((start + timedelta(minutes=3, seconds=20)).timestamp(), 3, 1, 71),
+        ((start + timedelta(minutes=5, seconds=5)).timestamp(), 6, 0.2, 72),
+    ]
+
+
+def test_a_step_starts_on_its_boundary_even_when_since_does_not(store):
+    start = NOW.replace(minute=5)
+    store.record(reading(start + timedelta(minutes=1), pv=2))
+    store.record(reading(start + timedelta(minutes=3), pv=4))
+    since = (start + timedelta(minutes=2)).timestamp()  # in the middle of the step
+    assert [round(pv, 6) for _, pv, _, _ in store.samples(since, 5)] == [3]
+
+
+async def test_history_in_steps(api, store):
+    now = datetime.now(timezone.utc).replace(second=30, microsecond=0)
+    for m in range(1, 31):
+        store.record(reading(now - timedelta(minutes=m)))
+    rows = (await api.get("/history", params={"since": 0, "step": 5})).json()["minutes"]
+    assert 6 <= len(rows) <= 7
+    assert all(row["pv_kw"] == 2 and row["battery_soc"] == 73 for row in rows)
+    assert (await api.get("/history", params={"step": 0})).status_code == 422
+    assert (await api.get("/history", params={"step": 61})).status_code == 422
