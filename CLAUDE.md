@@ -85,6 +85,9 @@ pv/
 │   │   └── state.ts              # In-memory simulator (SOC, energy balance, spare solar charging, command log)
 │   └── src/                      # React UI (Vite, port 5173)
 │
+├── docs/
+│   └── heat-pump.md              # Samsung heat pump: current settings, controller how-to, seasonal calendar (keep it current)
+│
 └── app/                          # Android mobile app (Kotlin/Compose)
     ├── app/src/main/java/ovh/tenjo/pv/
     │   ├── MainActivity.kt       # Navigation (dashboard / window screen), API config
