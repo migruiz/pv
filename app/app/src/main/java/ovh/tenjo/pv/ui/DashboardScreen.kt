@@ -47,6 +47,7 @@ import kotlin.math.roundToInt
 fun DashboardScreen(
     viewModel: SolarViewModel,
     modifier: Modifier = Modifier,
+    onElectricityClick: () -> Unit = {},
     onWindowClick: (String) -> Unit = {},
     onCreateWindow: () -> Unit = {},
 ) {
@@ -86,6 +87,11 @@ fun DashboardScreen(
                     // -- Today Stats --
                     StatsRow(state)
                 }
+
+                Spacer(Modifier.height(16.dp))
+
+                // -- Electricity bought and sold, by price window: its own screen --
+                ElectricityEntry(onClick = onElectricityClick)
 
                 Spacer(Modifier.height(24.dp))
 
@@ -923,6 +929,37 @@ private fun DischargeWindowCard(
     }
 }
 
+
+// ------------------------------------------------------------------
+// Electricity entry
+// ------------------------------------------------------------------
+
+@Composable
+private fun ElectricityEntry(onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = SurfaceContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Default.Euro, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Electricity", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Bought and sold by price window, in kWh and €",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurfaceVariant,
+                )
+            }
+            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = OnSurfaceVariant)
+        }
+    }
+}
 
 // ------------------------------------------------------------------
 // Error card

@@ -21,6 +21,8 @@ export interface SimulatorState {
   // Auto-calculated
   grid_kw: number;
   grid_importing: boolean;
+  grid_import_total_kwh: number; // the grid meter's running totals, counted from grid_kw
+  grid_export_total_kwh: number;
 
   // Forced command state (set by Python API)
   forced_mode: number; // 0=Stop, 1=Charge, 2=Discharge
@@ -49,6 +51,8 @@ const DEFAULT_STATE: Omit<SimulatorState, "grid_kw" | "grid_importing"> = {
   energy_today_kwh: 20,
   discharged_today_kwh: 3,
   total_energy_kwh: 600,
+  grid_import_total_kwh: 1200,
+  grid_export_total_kwh: 2200,
   forced_mode: 0,
   forced_power_kw: 0,
   forced_duration_min: 0,
@@ -60,6 +64,7 @@ const DEFAULT_STATE: Omit<SimulatorState, "grid_kw" | "grid_importing"> = {
 };
 
 let state: SimulatorState = { ...DEFAULT_STATE, grid_kw: 0, grid_importing: false };
+let gridCountedAt = Date.now();
 recalculateGrid();
 
 let socTimer: ReturnType<typeof setInterval> | null = null;
@@ -70,7 +75,17 @@ let autoCharging = false;
 // Energy balance
 // ---------------------------------------------------------------------------
 
+/** Adds what flowed to or from the grid since the last count to the meter's totals, at the flow until now. */
+function countGridEnergy() {
+  const now = Date.now();
+  const kwh = (state.grid_kw * (now - gridCountedAt)) / 3_600_000;
+  if (state.grid_importing) state.grid_import_total_kwh += kwh;
+  else state.grid_export_total_kwh += kwh;
+  gridCountedAt = now;
+}
+
 function recalculateGrid() {
+  countGridEnergy(); // at the old flow, before it changes
   const batteryNet = state.battery_charging
     ? -state.battery_power_kw // charging consumes from PV/grid
     : state.battery_power_kw; // discharging adds to supply
@@ -177,7 +192,7 @@ export function getState(): SimulatorState {
 }
 
 export function updateState(patch: Partial<SimulatorState>) {
-  const { grid_kw, grid_importing, command_log, ...allowed } = patch;
+  const { grid_kw, grid_importing, grid_import_total_kwh, grid_export_total_kwh, command_log, ...allowed } = patch;
   Object.assign(state, allowed);
   applySpareSolar();
   recalculateGrid();
@@ -187,11 +202,13 @@ export function resetState() {
   stopSocSimulation();
   autoCharging = false;
   state = { ...DEFAULT_STATE, command_log: [], grid_kw: 0, grid_importing: false };
+  gridCountedAt = Date.now();
   recalculateGrid();
 }
 
 /** Readings in the inverter's register names and units, as the Python API's InverterReader expects. */
 export function registers(): Record<string, number> {
+  countGridEnergy();
   const meterW = (state.grid_importing ? -state.grid_kw : state.grid_kw) * 1000;
   return {
     input_power: state.pv_kw * 1000,
@@ -202,6 +219,8 @@ export function registers(): Record<string, number> {
     storage_state_of_capacity: state.battery_soc,
     daily_yield_energy: state.energy_today_kwh,
     storage_current_day_discharge_capacity: state.discharged_today_kwh,
+    grid_accumulated_energy: state.grid_import_total_kwh, // kWh bought
+    grid_exported_energy: state.grid_export_total_kwh, // kWh sold
     storage_working_mode_settings: state.operation_mode,
     storage_charge_from_grid_function: state.charge_from_ac,
     storage_maximum_charging_power: state.max_charge_power,

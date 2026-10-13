@@ -13,6 +13,7 @@ import ovh.tenjo.pv.api.DaytimeTarget
 import ovh.tenjo.pv.api.DaytimeTargetSettings
 import ovh.tenjo.pv.api.DischargeWindow
 import ovh.tenjo.pv.api.SolarApiClient
+import ovh.tenjo.pv.api.UsageReport
 import ovh.tenjo.pv.api.WindowSettings
 import ovh.tenjo.pv.api.apiErrorMessage
 
@@ -51,6 +52,12 @@ data class TargetState(
     val error: String? = null,
 )
 
+/** The electricity screen's report; a failed refresh keeps the last one and shows the error. */
+data class UsageState(
+    val report: UsageReport? = null,
+    val error: String? = null,
+)
+
 /** The window screen's save or delete in progress, its refusal, and whether it finished. */
 data class EditorState(
     val isSaving: Boolean = false,
@@ -79,7 +86,12 @@ class SolarViewModel : ViewModel() {
     private val _notice = MutableStateFlow<String?>(null)
     val notice: StateFlow<String?> = _notice.asStateFlow()
 
+    private val _usage = MutableStateFlow(UsageState())
+    val usage: StateFlow<UsageState> = _usage.asStateFlow()
+
     private var autoRefreshJob: Job? = null
+    private var usageRefreshJob: Job? = null
+    private var usageOpen = false
 
     init {
         refreshDashboard()
@@ -215,6 +227,38 @@ class SolarViewModel : ViewModel() {
         _notice.value = null
     }
 
+    // -- Electricity usage --
+
+    fun loadUsage(): Job = viewModelScope.launch {
+        try {
+            _usage.value = UsageState(report = api.getUsage(USAGE_DAYS))
+        } catch (e: Exception) {
+            _usage.value = _usage.value.copy(error = apiErrorMessage(e))
+        }
+    }
+
+    /** The electricity screen opened: load now, then every minute while the app is in the foreground. */
+    fun openUsage() {
+        usageOpen = true
+        if (autoRefreshJob?.isActive == true) startUsageRefresh()
+    }
+
+    fun closeUsage() {
+        usageOpen = false
+        usageRefreshJob?.cancel()
+        usageRefreshJob = null
+    }
+
+    private fun startUsageRefresh() {
+        if (usageRefreshJob?.isActive == true) return
+        usageRefreshJob = viewModelScope.launch {
+            while (isActive) {
+                loadUsage().join()
+                delay(60_000)
+            }
+        }
+    }
+
     // -- Auto-refresh (lifecycle-aware) --
 
     /** Called each time the app comes to the foreground. */
@@ -238,10 +282,18 @@ class SolarViewModel : ViewModel() {
                 }
             }
         }
+        if (usageOpen) startUsageRefresh()
     }
 
     fun stopAutoRefresh() {
         autoRefreshJob?.cancel()
         autoRefreshJob = null
+        usageRefreshJob?.cancel()
+        usageRefreshJob = null
+    }
+
+    private companion object {
+        /** The electricity screen's days, today included. */
+        const val USAGE_DAYS = 7
     }
 }

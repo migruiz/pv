@@ -25,6 +25,7 @@ import com.google.firebase.messaging.FirebaseMessaging
 import ovh.tenjo.pv.api.SolarApiClient
 import ovh.tenjo.pv.ui.DashboardScreen
 import ovh.tenjo.pv.ui.DischargeWindowScreen
+import ovh.tenjo.pv.ui.ElectricityScreen
 import ovh.tenjo.pv.ui.theme.PVManagerTheme
 
 private sealed interface Screen {
@@ -32,6 +33,9 @@ private sealed interface Screen {
 
     /** The window screen: an existing window, or a new one when id is null. */
     data class Window(val id: String?) : Screen
+
+    /** Electricity bought and sold, by price window. */
+    data object Electricity : Screen
 }
 
 class MainActivity : ComponentActivity() {
@@ -87,9 +91,14 @@ class MainActivity : ComponentActivity() {
                             viewModel = solarViewModel,
                             onBack = { screen = Screen.Dashboard },
                         )
+                        Screen.Electricity -> ElectricityScreen(
+                            viewModel = solarViewModel,
+                            onBack = { screen = Screen.Dashboard },
+                        )
                         Screen.Dashboard -> DashboardScreen(
                             viewModel = solarViewModel,
                             modifier = Modifier.padding(innerPadding),
+                            onElectricityClick = { screen = Screen.Electricity },
                             onWindowClick = {
                                 solarViewModel.resetEditor()
                                 screen = Screen.Window(it)

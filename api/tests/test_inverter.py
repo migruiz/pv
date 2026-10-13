@@ -20,6 +20,8 @@ READINGS = {
     "storage_state_of_capacity": 75.0,
     "daily_yield_energy": 18.55,
     "storage_current_day_discharge_capacity": 1.76,
+    "grid_accumulated_energy": 1287.43,  # the grid meter's totals: example values
+    "grid_exported_energy": 2216.08,
     "storage_working_mode_settings": 5,
     "storage_charge_from_grid_function": True,
     "storage_maximum_charging_power": 2500,
@@ -110,6 +112,8 @@ class TestMapping:
             "energy_today_kwh": 18.55,
             "discharged_today_kwh": 1.76,
             "total_energy_kwh": 5922.79,
+            "grid_import_total_kwh": 1287.43,
+            "grid_export_total_kwh": 2216.08,
             "operation_mode": 5,
             "charge_from_ac": 1,
             "max_charge_power": 2500,

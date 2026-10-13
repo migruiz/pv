@@ -9,6 +9,8 @@ FAST_REGISTERS = [
     "storage_state_of_capacity",               # %
     "daily_yield_energy",                      # kWh
     "storage_current_day_discharge_capacity",  # kWh
+    "grid_accumulated_energy",                 # kWh bought from the grid: the meter's running total
+    "grid_exported_energy",                    # kWh sold to the grid: the meter's running total
 ]
 
 # Read every few rounds: settings changed through the FusionSolar cloud, and the lifetime total.
@@ -56,6 +58,8 @@ def to_dashboard(values: dict) -> dict:
         "energy_today_kwh": round(_number(v["daily_yield_energy"]), 2),
         "discharged_today_kwh": round(_number(v["storage_current_day_discharge_capacity"]), 2),
         "total_energy_kwh": round(_number(v["accumulated_yield_energy"]), 2),
+        "grid_import_total_kwh": round(_number(v["grid_accumulated_energy"]), 2),
+        "grid_export_total_kwh": round(_number(v["grid_exported_energy"]), 2),
         "operation_mode": int(_number(v["storage_working_mode_settings"])),
         "charge_from_ac": int(_number(v["storage_charge_from_grid_function"])),
         "max_charge_power": int(_number(v["storage_maximum_charging_power"])),

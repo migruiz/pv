@@ -87,6 +87,70 @@ data class WindowSettings(
 )
 
 // ------------------------------------------------------------------
+// Data models — Electricity usage
+// ------------------------------------------------------------------
+
+/** Electricity bought and sold each day, by the tariff's price windows, from the grid meter. */
+data class UsageReport(
+    val tariff: Tariff,
+    /** Oldest first; the last one is today so far. */
+    val days: List<UsageDay>,
+)
+
+data class Tariff(
+    val name: String,
+    /** The price bands in display order; their ids key each day's `bought`. */
+    val bands: List<TariffBand>,
+    @SerializedName("export_cents_per_kwh") val exportCentsPerKwh: Double,
+    @SerializedName("standing_charge_eur_per_day") val standingChargeEurPerDay: Double,
+)
+
+data class TariffBand(
+    val id: String,
+    val name: String,
+    /** "02:00-04:00" */
+    val hours: String,
+    @SerializedName("cents_per_kwh") val centsPerKwh: Double,
+)
+
+/** kWh, and what it cost or earned in euro. */
+data class Energy(
+    val kwh: Double = 0.0,
+    val eur: Double = 0.0,
+)
+
+data class UsageDay(
+    /** Dublin date, "2026-10-13". */
+    val date: String,
+    /** The whole day was read; false for today and for a day with gaps. */
+    val complete: Boolean,
+    @SerializedName("measured_hours") val measuredHours: Double,
+    /** Bought from the grid, by band id. */
+    val bought: Map<String, Energy> = emptyMap(),
+    @SerializedName("bought_total") val boughtTotal: Energy = Energy(),
+    val sold: Energy = Energy(),
+    /** Bought minus sold, without the standing charge: below 0 the day earned money. */
+    @SerializedName("net_eur") val netEur: Double = 0.0,
+    /** In time order: 48, or 46 / 50 on a clock-change day; today's future ones are zeros. */
+    @SerializedName("half_hours") val halfHours: List<HalfHour>? = null,
+    /** What the house used from any source (grid, battery or solar), kWh, not corrected. */
+    @SerializedName("used_kwh") val usedKwh: Double? = null,
+)
+
+data class HalfHour(
+    /** Dublin wall clock, "02:30" */
+    val start: String,
+    /** The band id its price comes from */
+    val band: String,
+    @SerializedName("bought_kwh") val boughtKwh: Double = 0.0,
+    @SerializedName("bought_eur") val boughtEur: Double = 0.0,
+    @SerializedName("sold_kwh") val soldKwh: Double = 0.0,
+    @SerializedName("sold_eur") val soldEur: Double = 0.0,
+    /** What the house used in this half hour from any source, kWh, not corrected. */
+    @SerializedName("used_kwh") val usedKwh: Double? = null,
+)
+
+// ------------------------------------------------------------------
 // Retrofit interface
 // ------------------------------------------------------------------
 
@@ -115,6 +179,9 @@ interface SolarApiService {
 
     @PUT("daytime-target")
     suspend fun setDaytimeTarget(@Body body: DaytimeTargetSettings): DaytimeTarget
+
+    @GET("usage")
+    suspend fun getUsage(@Query("days") days: Int): UsageReport
 }
 
 /** The API's reason for refusing a request ("Overlaps with ..."), or the error itself. */

@@ -28,6 +28,7 @@ COPY daytime_target/ daytime_target/
 COPY routers/ routers/
 COPY history/ history/
 COPY inverter/ inverter/
+COPY usage/ usage/
 RUN uv sync --frozen --no-dev
 
 USER app
