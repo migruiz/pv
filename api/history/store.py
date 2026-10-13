@@ -1,4 +1,5 @@
-"""Persistent minute history, fed by the existing inverter poller, for GET /history (the home's screens' charts)."""
+"""Persistent minute history, fed by the existing inverter poller, for GET /history (the home's screens' charts)
+and GET /usage. Kept for good: about 40 MB a year."""
 
 import math
 import sqlite3
@@ -8,7 +9,6 @@ from pathlib import Path
 
 FIELDS = ("pv_kw", "home_kw", "battery_soc")
 METER_FIELDS = ("grid_import_total_kwh", "grid_export_total_kwh")  # the grid meter's running totals, kWh
-RETENTION_SECONDS = 30 * 86400
 
 
 def finite(value):
@@ -24,7 +24,6 @@ class HistoryStore:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(path, check_same_thread=False, timeout=10)
         self._lock = threading.Lock()
-        self._last_prune = 0
         self._db.executescript("""
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=NORMAL;
@@ -70,28 +69,26 @@ class HistoryStore:
             self._db.execute("INSERT OR REPLACE INTO samples (minute,observed_at,pv_sum,home_sum,battery_soc,"
                              "sample_count,source,grid_import_kwh,grid_export_kwh) VALUES (?,?,?,?,?,?,?,?,?)",
                              (minute, stamp, pv, home, soc, count, "inverter", grid_import, grid_export))
-            if stamp - self._last_prune >= 3600:
-                self._db.execute("DELETE FROM samples WHERE minute < ?", (int((stamp - RETENTION_SECONDS) // 60),))
-                self._last_prune = stamp
 
-    def samples(self, since, step=1):
-        """Every stored minute from the one holding `since` (Unix seconds) on, oldest first:
-        (observed_at, average solar kW, average home kW, latest battery %, latest kWh bought and sold totals).
-        The totals are None for minutes recorded before they were.
+    def samples(self, since, step=1, until=None):
+        """Every stored minute from the one holding `since` (Unix seconds) on, up to the one before the minute
+        holding `until` if given, oldest first: (observed_at, average solar kW, average home kW, latest battery %,
+        latest kWh bought and sold totals). The totals are None for minutes recorded before they were.
 
         With `step` > 1, one row per `step` minutes (counted from the epoch, from the step holding
         `since`) that has any: its minutes' average power, and the latest minute's battery %, totals and time."""
         first = int(since // 60)
+        last = int(until // 60) if until is not None else 2**62
         with self._lock:
             if step <= 1:
                 return self._db.execute(
                     "SELECT observed_at,pv_sum/sample_count,home_sum/sample_count,battery_soc,grid_import_kwh,grid_export_kwh "
-                    "FROM samples WHERE minute >= ? ORDER BY minute", (first,)).fetchall()
+                    "FROM samples WHERE minute >= ? AND minute < ? ORDER BY minute", (first, last)).fetchall()
             # SQLite takes the bare observed_at, battery_soc and totals from the row holding max(minute).
             rows = self._db.execute(
                 "SELECT max(minute),observed_at,avg(pv_sum/sample_count),avg(home_sum/sample_count),battery_soc,"
-                "grid_import_kwh,grid_export_kwh FROM samples WHERE minute >= ? GROUP BY minute/? ORDER BY minute/?",
-                (first - first % step, step, step)).fetchall()
+                "grid_import_kwh,grid_export_kwh FROM samples WHERE minute >= ? AND minute < ? GROUP BY minute/? ORDER BY minute/?",
+                (first - first % step, last, step, step)).fetchall()
             return [row[1:] for row in rows]
 
     def status(self):

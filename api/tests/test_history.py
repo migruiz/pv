@@ -63,10 +63,18 @@ def test_database_survives_restart(tmp_path):
     second.close()
 
 
-def test_retention_prunes_old_history(store):
-    store.record(reading(NOW - timedelta(days=31)))
+def test_old_history_is_kept_for_good(store):
+    store.record(reading(NOW - timedelta(days=400)))
     store.record(reading())
-    assert store.status()['minutes'] == 1
+    assert store.status()['minutes'] == 2
+
+
+def test_samples_can_stop_before_a_time(store):
+    start = NOW - timedelta(hours=1)
+    for m in range(5):
+        store.record(reading(start + timedelta(minutes=m)))
+    rows = store.samples(start.timestamp(), until=(start + timedelta(minutes=3)).timestamp())
+    assert [at for at, *_ in rows] == [(start + timedelta(minutes=m)).timestamp() for m in range(3)]
 
 
 def test_minutes_keep_their_true_times_and_an_outage_stays_missing(store):

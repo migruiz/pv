@@ -26,7 +26,7 @@ from inverter.reader import InverterReader
 from history.router import router as history_router
 from history.store import HistoryStore
 from routers import dashboard, health
-from usage.router import router as usage_router
+from usage.router import router as usage_router, warm_up as warm_up_usage
 
 load_dotenv()
 
@@ -80,6 +80,7 @@ async def lifespan(app: FastAPI):
     app.state.daytime_target = daytime_target
 
     tasks = [asyncio.create_task(task.run()) for task in (inverter, controller, daytime_target)]
+    tasks.append(asyncio.create_task(warm_up_usage(app.state)))
 
     yield
 

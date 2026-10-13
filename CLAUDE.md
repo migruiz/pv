@@ -59,12 +59,12 @@ pv/
 │   │   ├── controller.py         # Spare solar to the battery or the grid; TOU back on for the night charge
 │   │   └── router.py             # /daytime-target endpoints
 │   ├── history/                  # Minute-by-minute history, fed by the inverter poller
-│   │   ├── store.py              # SQLite store: solar and home kW averaged per minute, latest battery % and grid meter totals, 30 days
+│   │   ├── store.py              # SQLite store: solar and home kW averaged per minute, latest battery % and grid meter totals, kept for good
 │   │   └── router.py             # GET /history (read-only key)
-│   ├── usage/                    # What was bought and sold each day, by price window
+│   ├── usage/                    # What was bought and sold each day and month, by price window
 │   │   ├── tariff.py             # The tariff: windows, prices, export, standing charge, correction to ESB's meter
 │   │   ├── report.py             # Meter totals shared out by half hour and window, corrected and priced (pure functions)
-│   │   └── router.py             # GET /usage (read-only key)
+│   │   └── router.py             # GET /usage and /usage/months (read-only key); finished days kept in memory, worked out 30 s after startup
 │   ├── routers/                  # Other API routers
 │   │   ├── dashboard.py          # Dashboard endpoint
 │   │   └── health.py             # Health check
@@ -77,7 +77,7 @@ pv/
 │   │   ├── test_daytime_target.py        # Spare-solar rule, window priority, night-charge TOU check, /daytime-target
 │   │   ├── test_inverter.py              # Inverter reader, commands, register mapping, /dashboard
 │   │   ├── test_history.py               # History store and GET /history
-│   │   └── test_usage.py                 # Usage by window: splitting, gaps, clock changes, GET /usage
+│   │   └── test_usage.py                 # Usage by window: splitting, gaps, clock changes, months, GET /usage and /usage/months
 │   ├── Dockerfile                # Multi-arch image (amd64 + arm64)
 │   ├── docker-compose.yml        # Local dev deployment
 │   ├── pyproject.toml            # uv project dependencies
@@ -96,7 +96,7 @@ pv/
 └── app/                          # Android mobile app (Kotlin/Compose)
     ├── app/src/main/java/ovh/tenjo/pv/
     │   ├── MainActivity.kt       # Navigation (dashboard / window screen), API config
-    │   ├── SolarViewModel.kt     # Dashboard, window and daytime target state, saves; in the foreground: dashboard at once then every 2 s, windows and target every 15 s
+    │   ├── SolarViewModel.kt     # Dashboard, window and daytime target state, saves; in the foreground: dashboard at once then every 2 s, windows and target every 15 s, the Electricity screen's days every minute and months every 5 minutes
     │   ├── api/SolarApi.kt       # Retrofit client, data models, API error reasons
     │   ├── AutoDischargeService.kt     # Ongoing "Discharging" notification
     │   ├── PvFirebaseMessagingService.kt # FCM message handler
@@ -104,7 +104,7 @@ pv/
     │   └── ui/
     │       ├── DashboardScreen.kt        # Energy flow diagram + daytime target (slider, Save/Cancel) + discharge window list + inverter info
     │       ├── DischargeWindowScreen.kt  # New / edit window: name, start, end, duration, target, switches
-    │       ├── ElectricityScreen.kt      # GET /usage: the day (net, bought, sold, half-hour chart), bought by price, the week by chosen windows; kWh / € (opened from the dashboard's Electricity card)
+    │       ├── ElectricityScreen.kt      # GET /usage and /usage/months, Day | Month and kWh | € in the header: the day (net, bought, sold, hourly chart, half hours when zoomed) or the month (one bar per day), bought by price, then the week or the months by chosen windows (opened from the dashboard's Electricity card)
     │       ├── TimePickers.kt            # Shared time/duration picker dialogs
     │       ├── TimeUtils.kt              # Shared time parsing/formatting
     │       └── theme/                    # Dark solar theme (Color, Theme, Type)
@@ -113,19 +113,20 @@ pv/
 
 ## API Endpoints
 
-All endpoints except `/health` and `/docs` require the `X-API-Key` header. The readings (`GET /dashboard`, `GET /history`, `GET /usage`, `GET /daytime-target`) also take the read-only key, `READ_API_KEY`, which cannot change anything: the Kindles' picture service in `C:/repos/home-assistant` uses it.
+All endpoints except `/health` and `/docs` require the `X-API-Key` header. The readings (`GET /dashboard`, `GET /history`, `GET /usage`, `GET /usage/months`, `GET /daytime-target`) also take the read-only key, `READ_API_KEY`, which cannot change anything: the Kindles' picture service in `C:/repos/home-assistant` uses it.
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Age of the last inverter reading (no auth) |
 | GET | `/docs` | Swagger UI |
 | GET | `/dashboard` | (read-only key too) Combined: PV, battery, grid, home power + flow directions + inverter settings + where spare solar goes (`spare_solar_to_battery`) + the grid meter's kWh bought and sold totals (`grid_import_total_kwh`, `grid_export_total_kwh`), read from the inverter every 3 s (503 if no reading in 30 s) |
-| GET | `/history` | (read-only key too) Every stored minute from `?since=` (Unix seconds; default 12 hours ago, at most 8 days), oldest first: `{minutes: [{observed_at, pv_kw, home_kw, battery_soc, grid_import_total_kwh, grid_export_total_kwh}]}`, power averaged over the minute, battery % and the grid meter's kWh bought and sold totals its latest (null before 13 Oct 2026). `?step=5` (1 to 60 minutes) gives one entry per 5 minutes instead, power averaged over its minutes: the kitchen screens' week, about 2,300 entries |
+| GET | `/history` | (read-only key too) Every stored minute from `?since=` (Unix seconds; default 12 hours ago, at most 8 days), oldest first: `{minutes: [{observed_at, pv_kw, home_kw, battery_soc, grid_import_total_kwh, grid_export_total_kwh}]}`, power averaged over the minute, battery % and the grid meter's kWh bought and sold totals its latest (null before 4 Feb 2026; minutes before 15 Sep 2026 come from FusionSolar and have no battery %). `?step=5` (1 to 60 minutes) gives one entry per 5 minutes instead, power averaged over its minutes: the kitchen screens' week, about 2,300 entries |
 | GET | `/discharge-windows` | All windows by start time, each with its live `state` (discharging, power, battery %, time left, target reached) |
 | POST | `/discharge-windows` | Create a window; applied before the reply (409 with the reason on overlap; `warning` if the inverter did not respond) |
 | PUT | `/discharge-windows/{id}` | Replace a window's settings; applied before the reply, also to a running discharge (`warning` as for POST) |
 | DELETE | `/discharge-windows/{id}` | Delete a window; a discharge it was running stops first (502, window kept, if the stop fails) |
-| GET | `/usage` | (read-only key too) The last `?days=` days (1-30, default 7), oldest first, ending today so far: kWh and euro bought in each price window (Boost 02-04, Night 23-08, Day 08-23), sold, net, and what the house used from grid, battery and solar (`used_kwh`), and the same for every half hour (`half_hours`: 48, or 46/50 on a clock-change day), from the meter totals and the house's minute averages in the history, corrected to ESB's meter; plus the tariff. See Usage below |
+| GET | `/usage` | (read-only key too) `?days=` days (1-30, default 7), oldest first, ending on `?end=` (YYYY-MM-DD, default today so far): kWh and euro bought in each price window (Boost 02-04, Night 23-08, Day 08-23), sold, net, and what the house used from grid, battery and solar (`used_kwh`), and the same for every half hour (`half_hours`: 48, or 46/50 on a clock-change day), from the meter totals and the house's minute averages in the history, corrected to ESB's meter; plus the tariff. See Usage below |
+| GET | `/usage/months` | (read-only key too) The last `?months=` calendar months (1-36, default 12; the app asks for 13), oldest first, ending with this month so far, months before the first readings left out: each month's totals as for a day, `complete` once it has ended with every day complete, and its `days` (from the 1st, without half hours) |
 | GET | `/daytime-target` | (read-only key too) The daytime target, the % at which charging resumes (`resume_below`), and whether a discharge window is holding it back (`window_running`) |
 | PUT | `/daytime-target` | Set the target `{"target_soc": 80}` (0-100); applied before the reply (`warning` if the inverter did not respond) |
 
@@ -187,8 +188,10 @@ One setting, 0-100%, in `/data/daytime_target.json` (`api/daytime_target.json` i
 
 ## Usage (bought and sold by price window)
 
-`GET /usage` replaces the ESB smart meter's half-hour data for the app's Electricity screen. Its source is the Huawei grid meter's running totals, stored once a minute in the history (so 30 days back, from 13 Oct 2026). What was bought or sold between two readings is shared out by time, so it is split at a window's start; a gap in the readings still counts in full but not as measured time (`measured_hours`; a past day is `complete` within 15 minutes).
+`GET /usage` and `/usage/months` replace the ESB smart meter's half-hour data for the app's Electricity screen. Their source is the Huawei grid meter's running totals, stored once a minute in the history and kept for good (about 40 MB a year). What was bought or sold between two readings is shared out by time, so it is split at a window's start; a gap in the readings still counts in full but not as measured time (`measured_hours`; a past day is `complete` within 15 minutes).
 
+- **History before 13 Oct 2026** is FusionSolar's 5-minute data for the same meter, backfilled: 15 Sep - 13 Oct into the API's own minutes, 4 Feb (12:30, when the meter started) - 15 Sep as added minutes (source `fusionsolar`), each day scaled to FusionSolar's daily meter totals, running totals ending exactly at the API's own. Checked against ESB's half hours: rms 0.04 kWh bought. Gaps: 20 May 23:00 - 21 May 13:00 (its energy is counted, spread over the gap), 28 Sep and 9 Oct. Everything is priced at today's tariff, including the months on Pinergy
+- **Speed**: a finished day's report is kept in memory, and the last 13 months are worked out 30 s after startup (8 s on the Pi for 378 days), so the app's first months request after a restart does not wait for it. A backfill needs an API restart
 - **Tariff**: `usage/tariff.py`, Electric Ireland Night Boost from 13 Oct 2026 (prices with VAT and the 5.5% discount, export 19.5c, standing charge €0.90 a day, not in `net_eur`). Change it with the supplier (March 2027)
 - **Correction**: against ESB's billing meter over 5 Feb - 5 Oct 2026 (243 days, FusionSolar's daily meter totals) the Huawei meter read 1.7% less bought and 1.0% more sold, the same every month; the report multiplies by 1.017 and 0.990. Half-hours from FusionSolar's 5-minute readings matched ESB's within about 0.05 kWh
 - **Wall clock**: windows follow the Dublin clock, so the day the clocks go back has 25 hours (its 00:00-02:00 window three)
@@ -206,7 +209,7 @@ Read and written with the `huawei-solar` library over the installer session. The
 | `forcible_charge_discharge_write` | 2 = discharge, 0 = stop; written last |
 | `storage_excess_pv_energy_use_in_tou` | TOU's spare solar: 0 = fed to grid, 1 = charge the battery; set by the daytime target, read with the settings |
 | `storage_working_mode_settings` | Operation mode (5 = TOU); written back to TOU only between 02:00 and 05:00, and only if it is not TOU |
-| `grid_accumulated_energy` / `grid_exported_energy` | The grid meter's running totals, kWh bought and sold (read every 3 s, kept per minute in the history since 13 Oct 2026) |
+| `grid_accumulated_energy` / `grid_exported_energy` | The grid meter's running totals, kWh bought and sold (read every 3 s, kept per minute in the history since 13 Oct 2026; FusionSolar's figures before that, back to 4 Feb) |
 
 ## Development
 
@@ -313,7 +316,7 @@ cd app && ./gradlew assembleRelease -x lintVitalRelease -x lintVitalAnalyzeRelea
 - **Public URL**: `https://pv.tenjo.ovh` (Cloudflare tunnel)
 - **Discharge windows config**: Persisted to `/data/discharge_windows.json` volume
 - **Daytime target**: `/data/daytime_target.json` volume
-- **History**: `/data/history.sqlite3` volume (`GET /history`)
+- **History**: `/data/history.sqlite3` volume (`GET /history`, `/usage`), kept for good
 - **Portainer stack**: `pv` (compose at `/data/compose/68/docker-compose.yml` in the `portainer_data` volume); env vars are inline in the stack file
 - **Inverter link**: the Pi's `wlan0` joins the inverter hotspot `SUN2000-TA2550448190` (NetworkManager connection `inverter-hotspot`: autoconnect with unlimited retries, `ipv4.never-default` so internet stays on `eth0`), and `wifi-radio-on.service` switches the radio on at boot. The inverter (SUN2000-5K-LB0, built-in WLAN, no Smart Dongle) answers one local Modbus session at a time, so the FusionSolar app's local screens cannot connect while the API is polling
 
@@ -325,7 +328,7 @@ cd app && ./gradlew assembleRelease -x lintVitalRelease -x lintVitalAnalyzeRelea
 | INVERTER_INSTALLER_PASS | Yes | Installer password for the inverter's local Modbus login (provided by the installer) |
 | INVERTER_HOST / INVERTER_PORT | No | Inverter hotspot address, default `192.168.8.1` / `6607` |
 | INVERTER_POLL_INTERVAL | No | Seconds between inverter reads, default `3` |
-| READ_API_KEY | No | Read-only key for the home's screens: `GET /dashboard`, `/history`, `/usage` and `/daytime-target` with `X-API-Key`; nothing else. Unset: only `API_KEY` reads them |
+| READ_API_KEY | No | Read-only key for the home's screens: `GET /dashboard`, `/history`, `/usage`, `/usage/months` and `/daytime-target` with `X-API-Key`; nothing else. Unset: only `API_KEY` reads them |
 | HISTORY_DB_PATH | No | History database (`GET /history`), default `/data/history.sqlite3` |
 | MOCK_MODE | No | Set to `1`/`true`/`yes` to use the mock simulator instead of the inverter |
 | MOCK_URL | No | Mock simulator URL (default: `http://localhost:3002`) |

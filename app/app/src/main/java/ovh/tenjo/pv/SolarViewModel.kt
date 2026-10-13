@@ -13,6 +13,7 @@ import ovh.tenjo.pv.api.DaytimeTarget
 import ovh.tenjo.pv.api.DaytimeTargetSettings
 import ovh.tenjo.pv.api.DischargeWindow
 import ovh.tenjo.pv.api.SolarApiClient
+import ovh.tenjo.pv.api.UsageMonths
 import ovh.tenjo.pv.api.UsageReport
 import ovh.tenjo.pv.api.WindowSettings
 import ovh.tenjo.pv.api.apiErrorMessage
@@ -58,6 +59,12 @@ data class UsageState(
     val error: String? = null,
 )
 
+/** The electricity screen's months; a failed refresh keeps the last ones and shows the error. */
+data class MonthsState(
+    val report: UsageMonths? = null,
+    val error: String? = null,
+)
+
 /** The window screen's save or delete in progress, its refusal, and whether it finished. */
 data class EditorState(
     val isSaving: Boolean = false,
@@ -89,9 +96,17 @@ class SolarViewModel : ViewModel() {
     private val _usage = MutableStateFlow(UsageState())
     val usage: StateFlow<UsageState> = _usage.asStateFlow()
 
+    private val _months = MutableStateFlow(MonthsState())
+    val months: StateFlow<MonthsState> = _months.asStateFlow()
+
     private var autoRefreshJob: Job? = null
     private var usageRefreshJob: Job? = null
     private var usageOpen = false
+    private var monthsRefreshJob: Job? = null
+    private var monthsOpen = false
+
+    /** The last of the electricity screen's days ("2026-02-15"), or null for today. */
+    private var usageEnd: String? = null
 
     init {
         refreshDashboard()
@@ -230,16 +245,32 @@ class SolarViewModel : ViewModel() {
     // -- Electricity usage --
 
     fun loadUsage(): Job = viewModelScope.launch {
+        val end = usageEnd
         try {
-            _usage.value = UsageState(report = api.getUsage(USAGE_DAYS))
+            val report = api.getUsage(USAGE_DAYS, end)
+            // A reply for days no longer wanted is dropped
+            if (end == usageEnd) _usage.value = UsageState(report = report)
         } catch (e: Exception) {
-            _usage.value = _usage.value.copy(error = apiErrorMessage(e))
+            if (end == usageEnd) _usage.value = _usage.value.copy(error = apiErrorMessage(e))
         }
+    }
+
+    /** Show the days ending on `end` ("2026-02-15"; null: today), for a day outside the ones loaded. */
+    fun showUsageDays(end: String?) {
+        if (end == usageEnd) return
+        usageEnd = end
+        _usage.value = UsageState()
+        loadUsage()
     }
 
     /** The electricity screen opened: load now, then every minute while the app is in the foreground. */
     fun openUsage() {
         usageOpen = true
+        // Each visit starts at today
+        if (usageEnd != null) {
+            usageEnd = null
+            _usage.value = UsageState()
+        }
         if (autoRefreshJob?.isActive == true) startUsageRefresh()
     }
 
@@ -255,6 +286,37 @@ class SolarViewModel : ViewModel() {
             while (isActive) {
                 loadUsage().join()
                 delay(60_000)
+            }
+        }
+    }
+
+    fun loadMonths(): Job = viewModelScope.launch {
+        try {
+            _months.value = MonthsState(report = api.getUsageMonths(USAGE_MONTHS))
+        } catch (e: Exception) {
+            _months.value = _months.value.copy(error = apiErrorMessage(e))
+        }
+    }
+
+    /** The electricity screen's month view opened: load now, then every 5 minutes in the foreground. */
+    fun openMonths() {
+        monthsOpen = true
+        if (autoRefreshJob?.isActive == true) startMonthsRefresh()
+    }
+
+    fun closeMonths() {
+        monthsOpen = false
+        monthsRefreshJob?.cancel()
+        monthsRefreshJob = null
+    }
+
+    private fun startMonthsRefresh() {
+        if (monthsRefreshJob?.isActive == true) return
+        monthsRefreshJob = viewModelScope.launch {
+            while (isActive) {
+                loadMonths().join()
+                // Only this month changes, and slowly
+                delay(300_000)
             }
         }
     }
@@ -283,6 +345,7 @@ class SolarViewModel : ViewModel() {
             }
         }
         if (usageOpen) startUsageRefresh()
+        if (monthsOpen) startMonthsRefresh()
     }
 
     fun stopAutoRefresh() {
@@ -290,10 +353,14 @@ class SolarViewModel : ViewModel() {
         autoRefreshJob = null
         usageRefreshJob?.cancel()
         usageRefreshJob = null
+        monthsRefreshJob?.cancel()
+        monthsRefreshJob = null
     }
 
     private companion object {
         /** The electricity screen's days, today included. */
         const val USAGE_DAYS = 7
+        /** The electricity screen's months: this one and the 12 before, so a month can be set beside last year's. */
+        const val USAGE_MONTHS = 13
     }
 }

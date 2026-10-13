@@ -6,7 +6,7 @@ import pytest
 
 from mock_clock import TZ
 from usage import tariff
-from usage.report import at, report
+from usage.report import at, months, report
 
 DAY = date(2026, 10, 14)
 B, S = tariff.CORRECTION_BOUGHT, tariff.CORRECTION_SOLD
@@ -201,3 +201,116 @@ def test_what_the_house_used_comes_from_its_minute_averages_whatever_the_source(
     assert halves(entry)["12:30"]["used_kwh"] == pytest.approx(1.0, abs=1e-3)
     assert entry["used_kwh"] == pytest.approx(2.0, abs=1e-3)
     assert entry["bought_total"]["kwh"] == 0  # the battery or solar covered it
+
+
+# ---------------------------------------------------------------------------
+# Months
+# ---------------------------------------------------------------------------
+
+def test_days_are_gathered_into_their_months_with_totals_and_without_half_hours():
+    sep30, oct1 = date(2026, 9, 30), date(2026, 10, 1)
+    rows = steady(at(sep30, time(12, 0)), at(oct1, time(12, 0)), bought_kw=1)
+    days = report(rows, [date(2026, 9, 29), sep30, oct1, date(2026, 10, 2)])
+    september, october = months(days)
+    assert (september["month"], october["month"]) == ("2026-09", "2026-10")
+    assert [d["date"] for d in september["days"]] == ["2026-09-29", "2026-09-30"]
+    assert all("half_hours" not in d for d in september["days"] + october["days"])
+    assert september["bought_total"]["kwh"] == pytest.approx(12 * B, abs=2e-3)
+    assert september["bought"]["day"]["kwh"] == pytest.approx(11 * B, abs=2e-3)  # 12:00-23:00
+    assert october["bought"]["night"]["kwh"] == pytest.approx(6 * B, abs=2e-3)  # 00-02, 04-08
+    assert october["net_eur"] == pytest.approx(october["bought_total"]["eur"], abs=1e-3)
+    assert october["measured_hours"] == pytest.approx(12, abs=0.05)
+    assert not september["complete"]  # it starts on the 29th
+
+
+def test_months_before_the_first_readings_are_left_out_and_a_whole_measured_month_is_complete():
+    feb = [date(2026, 2, 1) + timedelta(days=n) for n in range(28)]
+    jan31 = date(2026, 1, 31)
+    rows = steady(at(feb[0], time(0, 0)), at(feb[-1], None), bought_kw=1, every=300)
+    [february] = months(report(rows, [jan31] + feb))
+    assert february["month"] == "2026-02" and len(february["days"]) == 28
+    assert february["complete"]
+    assert february["bought_total"]["kwh"] == pytest.approx(28 * 24 * B, abs=0.05)
+
+
+async def test_usage_months_ends_with_this_month_so_far(api):
+    import mock_clock
+
+    client, store = api
+    mock_clock.set_time(9, 0)
+    today = mock_clock.get_now().date()
+    last_month = (today.replace(day=1) - timedelta(days=1)).replace(day=1)
+    two = datetime.combine(last_month, time(2, 0), TZ)
+    for minute in range(61):  # 02:00 to 03:00 on the 1st of last month, at 3 kW
+        record(store, two + timedelta(minutes=minute), 2000 + 0.05 * minute, 5000.0)
+    record(store, datetime.combine(today, time(8, 0), TZ), 2003.0, 5000.0)
+    body = (await client.get("/usage/months", params={"months": 3})).json()
+    assert [m["month"] for m in body["months"]] == [last_month.isoformat()[:7], today.isoformat()[:7]]
+    earlier, this = body["months"]
+    assert earlier["bought"]["boost"]["kwh"] == pytest.approx(3 * B, abs=1e-3)
+    assert earlier["days"][0]["date"] == last_month.isoformat() and "half_hours" not in earlier["days"][0]
+    assert this["days"][-1]["date"] == today.isoformat() and not this["complete"]
+    assert [b["id"] for b in body["tariff"]["bands"]] == ["boost", "night", "day"]
+    assert (await client.get("/usage/months", params={"months": 0})).status_code == 422
+    assert (await client.get("/usage/months", params={"months": 37})).status_code == 422
+
+
+async def test_usage_can_end_on_an_earlier_day_and_never_after_today(api):
+    import mock_clock
+
+    client, store = api
+    mock_clock.set_time(9, 0)
+    today = mock_clock.get_now().date()
+    end = today - timedelta(days=10)
+    body = (await client.get("/usage", params={"days": 2, "end": end.isoformat()})).json()
+    assert [d["date"] for d in body["days"]] == [(end - timedelta(days=1)).isoformat(), end.isoformat()]
+    body = (await client.get("/usage", params={"days": 1, "end": (today + timedelta(days=5)).isoformat()})).json()
+    assert [d["date"] for d in body["days"]] == [today.isoformat()]
+
+
+async def test_a_settled_day_is_worked_out_once_and_today_every_time(api):
+    import mock_clock
+
+    client, store = api
+    mock_clock.set_time(9, 0)
+    today = mock_clock.get_now().date()
+    old = today - timedelta(days=3)
+    noon = datetime.combine(old, time(12, 0), TZ)
+    record(store, noon, 2000.0, 5000.0)
+    record(store, noon + timedelta(minutes=1), 2001.0, 5000.0)
+    eight = datetime.combine(today, time(8, 0), TZ)
+    record(store, eight, 2001.0, 5000.0)
+    record(store, eight + timedelta(minutes=1), 2002.0, 5000.0)
+
+    def bought(body, day):
+        return next(d for d in body["days"] if d["date"] == day.isoformat())["bought_total"]["kwh"]
+
+    first = (await client.get("/usage", params={"days": 4})).json()
+    assert bought(first, old) == pytest.approx(B, abs=1e-3)
+    # More readings turn up for both days: only today's are seen
+    record(store, noon + timedelta(minutes=2), 2001.5, 5000.0)
+    record(store, eight + timedelta(minutes=2), 2002.5, 5000.0)
+    second = (await client.get("/usage", params={"days": 4})).json()
+    assert bought(second, old) == pytest.approx(B, abs=1e-3)
+    assert bought(second, today) == pytest.approx(1.5 * B, abs=1e-3)
+
+
+async def test_the_months_are_worked_out_in_the_background_after_startup(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import mock_clock
+    from history.store import HistoryStore
+    from usage import router
+
+    mock_clock.set_time(9, 0)
+    today = mock_clock.get_now().date()
+    store = HistoryStore(tmp_path / "history.sqlite3")
+    old = datetime.combine(today - timedelta(days=3), time(12, 0), TZ)
+    record(store, old, 2000.0, 5000.0)
+    record(store, old + timedelta(minutes=1), 2001.0, 5000.0)
+    monkeypatch.setattr(router, "WARM_AFTER", 0)
+    state = SimpleNamespace(history=store)
+    await router.warm_up(state)
+    assert state.usage_days[old.date()]["bought_total"]["kwh"] == pytest.approx(B, abs=1e-3)
+    assert today not in state.usage_days  # today is still going
+    store.close()

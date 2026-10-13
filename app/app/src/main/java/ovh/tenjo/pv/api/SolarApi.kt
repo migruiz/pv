@@ -137,6 +137,31 @@ data class UsageDay(
     @SerializedName("used_kwh") val usedKwh: Double? = null,
 )
 
+/** Electricity bought and sold each month, by the tariff's price windows, with its days. */
+data class UsageMonths(
+    val tariff: Tariff,
+    /** Oldest first; the last one is this month so far. Months before the first readings are left out. */
+    val months: List<UsageMonth>,
+)
+
+data class UsageMonth(
+    /** "2026-10" */
+    val month: String,
+    /** The month has ended and every day of it is complete. */
+    val complete: Boolean,
+    @SerializedName("measured_hours") val measuredHours: Double,
+    /** Bought from the grid, by band id. */
+    val bought: Map<String, Energy> = emptyMap(),
+    @SerializedName("bought_total") val boughtTotal: Energy = Energy(),
+    val sold: Energy = Energy(),
+    /** Bought minus sold, without the standing charge: below 0 the month earned money. */
+    @SerializedName("net_eur") val netEur: Double = 0.0,
+    /** What the house used from any source (grid, battery or solar), kWh, not corrected. */
+    @SerializedName("used_kwh") val usedKwh: Double? = null,
+    /** From the 1st to the month's last day, or to today: without their half hours. */
+    val days: List<UsageDay> = emptyList(),
+)
+
 data class HalfHour(
     /** Dublin wall clock, "02:30" */
     val start: String,
@@ -180,8 +205,12 @@ interface SolarApiService {
     @PUT("daytime-target")
     suspend fun setDaytimeTarget(@Body body: DaytimeTargetSettings): DaytimeTarget
 
+    /** The `days` days ending on `end` ("2026-02-15"; null: today). */
     @GET("usage")
-    suspend fun getUsage(@Query("days") days: Int): UsageReport
+    suspend fun getUsage(@Query("days") days: Int, @Query("end") end: String?): UsageReport
+
+    @GET("usage/months")
+    suspend fun getUsageMonths(@Query("months") months: Int): UsageMonths
 }
 
 /** The API's reason for refusing a request ("Overlaps with ..."), or the error itself. */

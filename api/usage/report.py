@@ -119,3 +119,43 @@ def report(readings, days: list[date], home=()) -> list[dict]:
             "half_hours": halves,
         })
     return result
+
+
+def months(days: list[dict]) -> list[dict]:
+    """The day entries of `report`, oldest first, gathered into their calendar months, oldest first.
+
+    Each month: its totals, summed from its days, and the days themselves without their half hours. Months
+    before the first one with any readings are left out. A month is `complete` when all its days are there
+    and complete, so never the current one.
+    """
+    result = []
+    for day in days:
+        month = day["date"][:7]
+        if not result or result[-1]["month"] != month:
+            result.append({"month": month, "days": []})
+        result[-1]["days"].append({k: v for k, v in day.items() if k != "half_hours"})
+    while result and not any(d["measured_hours"] or d["bought_total"]["kwh"] or d["sold"]["kwh"]
+                             for d in result[0]["days"]):
+        result.pop(0)
+
+    for entry in result:
+        entries = entry["days"]
+        first = date.fromisoformat(entries[0]["date"])
+        length = ((first.replace(day=28) + timedelta(days=4)).replace(day=1) - first.replace(day=1)).days
+
+        def total(get):
+            return round(sum(get(d) for d in entries), 3)
+
+        entry.update({
+            "complete": len(entries) == length and all(d["complete"] for d in entries),
+            "measured_hours": total(lambda d: d["measured_hours"]),
+            "bought": {band: {"kwh": total(lambda d: d["bought"][band]["kwh"]),
+                              "eur": total(lambda d: d["bought"][band]["eur"])} for band in entries[0]["bought"]},
+            "bought_total": {"kwh": total(lambda d: d["bought_total"]["kwh"]),
+                             "eur": total(lambda d: d["bought_total"]["eur"])},
+            "sold": {"kwh": total(lambda d: d["sold"]["kwh"]), "eur": total(lambda d: d["sold"]["eur"])},
+            "net_eur": total(lambda d: d["net_eur"]),
+            "used_kwh": total(lambda d: d["used_kwh"]),
+        })
+        entry["days"] = entry.pop("days")  # last, after the totals
+    return result
