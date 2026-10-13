@@ -2,7 +2,7 @@
 
 A window runs every day from its start to its end on the Dublin wall clock, as the app shows them, like
 the inverter's own TOU schedule. On a daylight-saving night it is an hour longer or shorter in real
-time: a 23:35 to 02:00 window still ends at 02:00, before the TOU charge at 02:05. Run times are in UTC.
+time: a 23:35 to 02:00 window still ends at 02:00, before the TOU charge at 02:01. Run times are in UTC.
 """
 
 from collections.abc import Iterator

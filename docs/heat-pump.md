@@ -164,8 +164,8 @@ Backlight 4 seconds, green light on, red warning light on (as seen on 12 Oct). 3
 
 | When | Change |
 |---|---|
-| Now (Oct 2026, no house heating yet) | Battery charges 02:00-04:00 (FusionSolar app), then powers the house the rest of the day |
-| When the house heating starts (expected end of Oct 2026) | Battery charge period **02:00-08:00**, so it fills 2-4am and stays full through the morning heating. Read and set the weekly heating timers. Read the heating curve and test lowering the +5 shift |
+| Now (Oct 2026, no house heating yet) | Battery charges 02:01-03:59 (FusionSolar app, set 12 Oct), then powers the house the rest of the day |
+| When the house heating starts (expected end of Oct 2026) | Battery charge period **02:01-07:59** (and discharge from 07:59), so it fills 2-4am and stays full through the morning heating; widen the API's night-charge check (`NIGHT_CHARGE`) to 08:00. Read and set the weekly heating timers. Read the heating curve and test lowering the +5 shift |
 | Morning after any timer change | Check the Pi's minute history (`/data/history.sqlite3`): hot water should start about 02:04 and stop by itself before about 03:09; Sundays the weekly heat also starts about 02:04 |
 | Last Sunday of October and of March | Clocks change. The controller follows by itself; check it is still about 5 minutes slow |
 | March 2027 | Supplier changes for the summer: re-time the hot water, the weekly heat and the battery to the new cheap hours |

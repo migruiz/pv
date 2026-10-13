@@ -9,7 +9,7 @@ Discharge windows come first: for the whole of a window's run, even once it has 
 spare solar goes to the grid, so solar never refills what the window is emptying.
 
 check() also keeps the night charge safe: between 02:00 and 05:00, an inverter switched out of TOU mode
-(by hand, in the FusionSolar app) is put back into it, so the 02:05 grid charge always runs.
+(by hand, in the FusionSolar app) is put back into it, so the 02:01 grid charge always runs.
 
 Nothing depends on this running: if the API or the hotspot link dies, the setting stays where it was
 (the battery takes a little more or less solar), and the TOU night charge happens anyway.
