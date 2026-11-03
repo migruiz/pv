@@ -63,5 +63,12 @@ def to_dashboard(values: dict) -> dict:
         "operation_mode": int(_number(v["storage_working_mode_settings"])),
         "charge_from_ac": int(_number(v["storage_charge_from_grid_function"])),
         "max_charge_power": int(_number(v["storage_maximum_charging_power"])),
-        "spare_solar_to_battery": _number(v["storage_excess_pv_energy_use_in_tou"]) == 1,
+        "spare_solar_to_battery": _spare_solar_to_battery(v),
     }
+
+
+def _spare_solar_to_battery(v: dict) -> bool:
+    """Whether solar the house does not use charges the battery: always in Maximum self-consumption,
+    and in TOU when its "excess PV energy" setting says charge."""
+    mode = int(_number(v["storage_working_mode_settings"]))
+    return mode == 2 or (mode == 5 and _number(v["storage_excess_pv_energy_use_in_tou"]) == 1)

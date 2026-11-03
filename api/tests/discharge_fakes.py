@@ -33,7 +33,7 @@ class FakeInverter:
     def __init__(self, soc: float = 80.0):
         self.soc = soc
         self.operation_mode = 5  # TOU
-        self.spare_solar_to_battery = False
+        self.tou_excess_to_battery = False  # TOU's spare-solar setting: charge (True) or fed to grid
         self.commands: list[dict] = []
         self.reading_fails = False
         self.write_fails = False
@@ -48,6 +48,11 @@ class FakeInverter:
         return {"battery_soc": self.soc, "operation_mode": self.operation_mode,
                 "spare_solar_to_battery": self.spare_solar_to_battery}
 
+    @property
+    def spare_solar_to_battery(self) -> bool:
+        """As /dashboard says: always in self-consumption, in TOU when its setting says charge."""
+        return self.operation_mode == 2 or (self.operation_mode == 5 and self.tou_excess_to_battery)
+
     async def write(self, settings):
         if self.write_fails:
             raise InverterUnavailable("write failed")
@@ -55,7 +60,7 @@ class FakeInverter:
         self.commands.append(command)
         self.operation_mode = command.get("storage_working_mode_settings", self.operation_mode)
         if "storage_excess_pv_energy_use_in_tou" in command:
-            self.spare_solar_to_battery = command["storage_excess_pv_energy_use_in_tou"] == 1
+            self.tou_excess_to_battery = command["storage_excess_pv_energy_use_in_tou"] == 1
         if self.reply_lost:
             raise InverterUnavailable("no response received")
 

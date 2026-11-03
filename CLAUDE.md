@@ -29,7 +29,7 @@ Home solar PV monitoring, battery discharge windows and a daytime battery target
   - Inverter: SUN2000-5K-LB0, `NE=239198740` (5 kW rated, 2 MPPT strings, built-in WLAN, no Smart Dongle)
   - Battery: `NE=239198746` (5 kWh, LUNA2000)
   - Power Sensor: `NE=239198748`
-- **TOU schedule** (set in the FusionSolar app; the API never changes the periods): charge from the grid 02:01-03:59 (Electric Ireland Night Boost's 02:00-04:00 rate, since 13 Oct 2026), discharge to load the rest of the day. Once the house heating starts (expected end of Oct 2026) the charge runs to 07:59, so the battery stays full through the morning heating; widen `NIGHT_CHARGE` in `daytime_target/controller.py` to match. The API sets TOU's spare-solar setting for the daytime target, and puts the mode back to TOU during the night charge
+- **TOU schedule** (set in the FusionSolar app; the API never changes the periods): charge 02:01-07:59, discharge to load 08:00-02:01 (since 23 Oct 2026). The battery fills from the grid in Electric Ireland Night Boost's 02:00-04:00 rate (full by about 03:57), then stays full while the house runs on the grid at the night rate until 08:00, so the morning heating never empties it before the day rate. Checked before the heating, on 13-22 Oct: holding cost nothing (the held charge ended up sold at 19.5c against 18.54c bought). The API keeps the inverter in TOU from 23:00 to 08:00 (`DAYTIME` in `daytime_target/controller.py`), so the charge period always runs; between 08:00 and 23:00 it switches to Maximum self-consumption while the daytime target wants the battery charged
 
 ## Project Structure
 
@@ -56,7 +56,7 @@ pv/
 │   │   └── router.py             # /discharge-windows endpoints
 │   ├── daytime_target/           # Daytime battery target
 │   │   ├── store.py              # JSON file I/O (atomic writes)
-│   │   ├── controller.py         # Spare solar to the battery or the grid; TOU back on for the night charge
+│   │   ├── controller.py         # Self-consumption below the target, TOU at it; TOU from 23:00 to 08:00
 │   │   └── router.py             # /daytime-target endpoints
 │   ├── history/                  # Minute-by-minute history, fed by the inverter poller
 │   │   ├── store.py              # SQLite store: solar and home kW averaged per minute, latest battery % and grid meter totals, kept for good
@@ -74,7 +74,7 @@ pv/
 │   │   ├── test_discharge_controller.py  # The rule, case by case (start, correct, target, edits, failures)
 │   │   ├── test_discharge_schedule.py    # Timing, daylight saving, power math, commands, store
 │   │   ├── test_discharge_api.py         # /discharge-windows HTTP endpoints
-│   │   ├── test_daytime_target.py        # Spare-solar rule, window priority, night-charge TOU check, /daytime-target
+│   │   ├── test_daytime_target.py        # Spare-solar rule, mode switch, window priority, TOU at night, /daytime-target
 │   │   ├── test_inverter.py              # Inverter reader, commands, register mapping, /dashboard
 │   │   ├── test_history.py               # History store and GET /history
 │   │   └── test_usage.py                 # Usage by window: splitting, gaps, clock changes, months, GET /usage and /usage/months
@@ -119,7 +119,7 @@ All endpoints except `/health` and `/docs` require the `X-API-Key` header. The r
 |--------|------|-------------|
 | GET | `/health` | Age of the last inverter reading (no auth) |
 | GET | `/docs` | Swagger UI |
-| GET | `/dashboard` | (read-only key too) Combined: PV, battery, grid, home power + flow directions + inverter settings + where spare solar goes (`spare_solar_to_battery`) + the grid meter's kWh bought and sold totals (`grid_import_total_kwh`, `grid_export_total_kwh`), read from the inverter every 3 s (503 if no reading in 30 s) |
+| GET | `/dashboard` | (read-only key too) Combined: PV, battery, grid, home power + flow directions + inverter settings + where spare solar goes (`spare_solar_to_battery`: self-consumption, or TOU set to charge) + the grid meter's kWh bought and sold totals (`grid_import_total_kwh`, `grid_export_total_kwh`), read from the inverter every 3 s (503 if no reading in 30 s) |
 | GET | `/history` | (read-only key too) Every stored minute from `?since=` (Unix seconds; default 12 hours ago, at most 8 days), oldest first: `{minutes: [{observed_at, pv_kw, home_kw, battery_soc, grid_import_total_kwh, grid_export_total_kwh}]}`, power averaged over the minute, battery % and the grid meter's kWh bought and sold totals its latest (null before 4 Feb 2026; minutes before 15 Sep 2026 come from FusionSolar and have no battery %). `?step=5` (1 to 60 minutes) gives one entry per 5 minutes instead, power averaged over its minutes: the kitchen screens' week, about 2,300 entries |
 | GET | `/discharge-windows` | All windows by start time, each with its live `state` (discharging, power, battery %, time left, target reached) |
 | POST | `/discharge-windows` | Create a window; applied before the reply (409 with the reason on overlap; `warning` if the inverter did not respond) |
@@ -177,14 +177,14 @@ Consequences: edits to a running window (end, target, switched off, deleted, mov
 
 ## Daytime Battery Target
 
-One setting, 0-100%, in `/data/daytime_target.json` (`api/daytime_target.json` in local dev; missing = 0). Spare solar (what the house does not use) charges the battery up to the target and goes to the grid above it, so in autumn and winter the battery reaches the evening fuller. The inverter stays in TOU mode all the time: `daytime_target/controller.py` flips TOU's "excess PV energy" setting (fed to grid / charge) from the battery % every 30 s and straight after a save. Proven on the inverter on 2026-09-24: within ~10 s the export went to zero and the battery took all the spare solar, without importing.
+One setting, 0-100%, in `/data/daytime_target.json` (`api/daytime_target.json` in local dev; missing = 0). Spare solar (what the house does not use) charges the battery up to the target and goes to the grid above it, so in autumn and winter the battery reaches the evening fuller. `daytime_target/controller.py` switches the operation mode from the battery % every 30 s and straight after a save: **Maximum self-consumption** to charge the battery from spare solar, **TOU** (with its "excess PV energy" setting on fed to grid) to export it. Since 3 Nov 2026; before that the inverter stayed in TOU and the API flipped TOU's own setting to "charge", which the inverter ignored all that morning (read back as charge, battery idle, spare solar exported) while self-consumption charged at once.
 
-- **The rule**: at or above the target, spare solar goes to the grid; it goes back into the battery once the battery is 10% below the target (80% target: at 70%), so the setting changes a couple of times a day. Right after a save the gap is ignored: a battery anywhere below the new target charges. 0% keeps it on the grid (the behaviour before this feature); 100% keeps it on the battery
+- **The rule**: at or above the target, spare solar goes to the grid; it goes back into the battery once the battery is 5% below the target (80% target: at 75%; 10% until 26 Oct 2026), so the mode changes a few times a day. Right after a save the gap is ignored: a battery anywhere below the new target charges. 0% keeps it on the grid (the behaviour before this feature); 100% keeps it on the battery
 - **The battery always powers the house**, at any level; the grid never charges it by day, only the TOU charge period at night
-- **Discharge windows come first**: for the whole of a window's run, even after it reached its own target, spare solar goes to the grid, so solar never refills what the window is emptying. The target applies again when the window ends
-- **Night charge check**: between 02:00 and 05:00, an inverter found out of TOU mode (switched by hand in the FusionSolar app) is put back into TOU, retried every 30 s, so the 02:01 grid charge always runs. Tested in the unit tests and the simulator, not yet seen on the real inverter
-- **Nothing depends on it running**: if the API or the hotspot link dies, the setting stays where it was (a little more or less solar in the battery) and the TOU night charge happens anyway. The API owns the setting: a change made in the FusionSolar app is put back within about 30 s
-- **App**: a section between the dashboard and the windows. The slider only picks a value; Save applies it, Cancel drops it. It shows where spare solar goes now and the % at which charging resumes
+- **Discharge windows come first**: for the whole of a window's run, even after it reached its own target, the inverter is in TOU with spare solar to the grid, so solar never refills what the window is emptying. The target applies again when the window ends. A mode change while a window runs makes the discharge controller check at once, in case it cancelled the forced discharge
+- **TOU from 23:00 to 08:00**: self-consumption only between 08:00 and 23:00. At 23:00 the inverter goes back to TOU whatever the battery %, and from then until 08:00 any other mode (switched by hand in the FusionSolar app) is put back into TOU, retried every 30 s, so the 02:01 grid charge always runs and the full battery is held until 08:00
+- **If it stops running**: if the API or the hotspot link dies, the mode stays where it was. In TOU nothing is lost. In self-consumption the battery fills to 100% and, until the API is back, the 02:01 night charge does not run (the battery powers the house through the night instead): the risk accepted on 3 Nov 2026. The API owns the mode at every hour: a change made in the FusionSolar app is put back within about 30 s
+- **App**: a section between the dashboard and the windows. The slider (1% steps, like the kitchen screens' bar) only picks a value; Save applies it, Cancel drops it. It shows where spare solar goes now and the % at which charging resumes
 
 ## Usage (bought and sold by price window)
 
@@ -198,7 +198,7 @@ One setting, 0-100%, in `/data/daytime_target.json` (`api/daytime_target.json` i
 
 ## Inverter Registers
 
-Read and written with the `huawei-solar` library over the installer session. The battery command sequence was proven on the inverter on 2026-09-23, the spare-solar setting on 2026-09-24; the FusionSolar cloud's own forced-discharge command writes these same registers.
+Read and written with the `huawei-solar` library over the installer session. The battery command sequence was proven on the inverter on 2026-09-23, the spare-solar setting on 2026-09-24, the mode switch from 2026-11-03; the FusionSolar cloud's own forced-discharge command writes these same registers.
 
 | Register name | Use |
 |---------------|-----|
@@ -207,8 +207,8 @@ Read and written with the `huawei-solar` library over the installer session. The
 | `storage_forced_charging_and_discharging_period` | Minutes left in the window (the inverter stops by itself after it) |
 | `storage_forcible_discharge_power` | W (0-2500); about 8% less is measured at the battery |
 | `forcible_charge_discharge_write` | 2 = discharge, 0 = stop; written last |
-| `storage_excess_pv_energy_use_in_tou` | TOU's spare solar: 0 = fed to grid, 1 = charge the battery; set by the daytime target, read with the settings |
-| `storage_working_mode_settings` | Operation mode (5 = TOU); written back to TOU only between 02:00 and 05:00, and only if it is not TOU |
+| `storage_excess_pv_energy_use_in_tou` | TOU's spare solar: 0 = fed to grid, 1 = charge the battery; kept on fed to grid whenever the API puts TOU on, read with the settings |
+| `storage_working_mode_settings` | Operation mode: 2 = Maximum self-consumption (daytime target charging, 08:00-23:00), 5 = TOU (otherwise); written only when it differs |
 | `grid_accumulated_energy` / `grid_exported_energy` | The grid meter's running totals, kWh bought and sold (read every 3 s, kept per minute in the history since 13 Oct 2026; FusionSolar's figures before that, back to 4 Feb) |
 
 ## Development
@@ -256,7 +256,7 @@ uv run --with pytest --with pytest-asyncio --with httpx python -m pytest tests/ 
 Tests run in about 2 seconds with no external dependencies (no Node.js mock, no Firebase, no network). The discharge and daytime target tests use:
 
 - **Clock**: a settable Dublin clock passed to the controller, so each case sets the time it needs
-- **FakeInverter**: serves a battery %, the operation mode and the spare-solar setting, and records every command written; reads or writes fail on demand
+- **FakeInverter**: serves a battery %, the operation mode and TOU's spare-solar setting, and records every command written; reads or writes fail on demand
 - **Captured notifications**: FCM functions are patched and the sends recorded as (kind, window) pairs
 - **Isolated store**: each test gets a `tmp_path` windows file
 
@@ -338,5 +338,5 @@ cd app && ./gradlew assembleRelease -x lintVitalRelease -x lintVitalAnalyzeRelea
 - **Everything local**: `inverter/reader.py` keeps one Modbus session to the inverter hotspot (`192.168.8.1:6607`, `installer` login via `huawei-solar`), polls every 3 s and caches the result; `/dashboard` only reads the cache, so clients can poll as often as they like. Settings and the lifetime total are re-read every 10th round. Battery commands (`write()`) go over the same session between two reading rounds, under a lock. A rejected password stops polling (retries would lock logins for ~10 min), and failures are logged sparingly (first, then every 100th). The lifetime `total_energy_kwh` is the inverter's own counter, about 1,019 kWh above FusionSolar's plant total. Trade-off: if the hotspot link drops, both readings and control stop; the discharge command's own period is the safety net
 - **Saved windows are the only instruction**: one controller applies one rule, with no per-window tasks, no "launched" bookkeeping and no state files. After a restart the next check applies the rule again
 - **Discharge windows** use a JSON config file on the Docker volume, not a database, written atomically (write tmp + rename). An unreadable file raises instead of being treated as empty, so a save can never wipe the windows
-- **TOU schedule is left alone**: the API never writes the TOU periods. It writes only TOU's spare-solar setting (daytime target) and, during the night charge, the operation mode back to TOU; a forced discharge overrides TOU while it runs, and the inverter goes back to the schedule by itself
+- **TOU schedule is left alone**: the API never writes the TOU periods. It writes the operation mode (self-consumption or TOU, daytime target) and TOU's spare-solar setting (fed to grid); a forced discharge overrides either mode while it runs, and the inverter goes back to it by itself
 - **Mock clock**: in mock mode, time comes from `mock_clock.get_now()`, which the `/mock/time` endpoints move; the controller takes a clock argument so tests set the time directly

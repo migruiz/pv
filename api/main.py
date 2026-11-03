@@ -76,7 +76,9 @@ async def lifespan(app: FastAPI):
     windows = WindowStore(DATA_DIR / "discharge_windows.json")
     controller = DischargeController(windows, inverter)
     app.state.discharge = controller
-    daytime_target = DaytimeTargetController(TargetStore(DATA_DIR / "daytime_target.json"), windows, inverter)
+    # A mode change might cancel a running forced discharge: the discharge controller re-checks at once
+    daytime_target = DaytimeTargetController(TargetStore(DATA_DIR / "daytime_target.json"), windows, inverter,
+                                             on_mode_change_in_window=controller.refresh)
     app.state.daytime_target = daytime_target
 
     tasks = [asyncio.create_task(task.run()) for task in (inverter, controller, daytime_target)]
@@ -120,7 +122,7 @@ if MOCK_MODE:
 
     async def _clock_moved(t):
         await app.state.discharge.refresh()
-        await app.state.daytime_target.check()  # the night charge's TOU check depends on the time
+        await app.state.daytime_target.check()  # the mode depends on the time (TOU from 23:00 to 08:00)
         return {"time": t.isoformat(), "virtual": mock_clock.is_virtual()}
 
     @mock_router.get("/time")

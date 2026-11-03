@@ -542,7 +542,8 @@ private fun InverterInfoDialog(state: DashboardState, onDismiss: () -> Unit) {
         else -> "Unknown (${state.operationMode})"
     }
     val acChargeText = if (state.chargeFromAc == 1) "Enabled" else "Disabled"
-    val modeColor = if (state.operationMode == 5) BatteryGreen else EnergyOrange
+    // TOU, or self-consumption while the daytime target charges the battery: both normal
+    val modeColor = if (state.operationMode == 5 || state.operationMode == 2) BatteryGreen else EnergyOrange
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -647,7 +648,7 @@ private fun DaytimeTargetSection(state: TargetState, dashboard: DashboardState, 
                         value = shown.toFloat(),
                         onValueChange = { draft = it.roundToInt() },
                         valueRange = 0f..100f,
-                        steps = 19, // 5% steps
+                        // 1% steps: rounded above, with no tick marks (100 of them would crowd the track)
                         enabled = !state.isSaving,
                         colors = SliderDefaults.colors(thumbColor = BatteryGreen, activeTrackColor = BatteryGreen),
                     )

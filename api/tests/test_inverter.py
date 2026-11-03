@@ -153,6 +153,14 @@ class TestMapping:
 
         assert to_dashboard({**READINGS, "storage_excess_pv_energy_use_in_tou": Charge()})["spare_solar_to_battery"]
 
+    def test_self_consumption_always_charges_the_battery_from_spare_solar(self):
+        data = to_dashboard({**READINGS, "storage_working_mode_settings": 2, "storage_excess_pv_energy_use_in_tou": 0})
+        assert data["spare_solar_to_battery"] is True
+
+    def test_tou_s_charge_setting_counts_only_in_tou(self):
+        data = to_dashboard({**READINGS, "storage_working_mode_settings": 4, "storage_excess_pv_energy_use_in_tou": 1})
+        assert data["spare_solar_to_battery"] is False
+
     def test_unread_settings_use_the_previous_defaults(self):
         data = to_dashboard({name: READINGS[name] for name in FAST_REGISTERS})
         assert (data["operation_mode"], data["charge_from_ac"], data["max_charge_power"]) == (5, 1, 2500)
