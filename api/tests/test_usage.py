@@ -31,7 +31,7 @@ def test_a_steady_kilowatt_all_day_falls_into_each_window_by_its_hours():
     assert kwh(entry, "boost") == pytest.approx(2 * B, abs=1e-3)
     assert kwh(entry, "night") == pytest.approx(7 * B, abs=1e-3)   # 00-02, 04-08, 23-24
     assert kwh(entry, "day") == pytest.approx(15 * B, abs=1e-3)
-    assert entry["bought"]["boost"]["eur"] == pytest.approx(2 * B * 0.1088, abs=1e-3)
+    assert entry["bought"]["boost"]["eur"] == pytest.approx(2 * B * 0.1093, abs=1e-3)
     assert entry["bought_total"]["kwh"] == pytest.approx(24 * B, abs=1e-3)
     assert (entry["measured_hours"], entry["complete"]) == (24, True)
     assert entry["sold"] == {"kwh": 0, "eur": 0}
@@ -44,6 +44,16 @@ def test_selling_is_counted_and_priced_and_the_net_takes_it_off():
     assert entry["sold"]["eur"] == pytest.approx(2 * S * 0.195, abs=1e-3)
     assert entry["net_eur"] == pytest.approx(-2 * S * 0.195, abs=1e-3)
     assert entry["bought_total"]["kwh"] == 0
+
+
+def test_selling_before_the_api_read_the_meter_itself_takes_fusionsolars_correction():
+    # 13 Oct 2026: FusionSolar's totals until 06:37, the inverter's own register from then on
+    first = date(2026, 10, 13)
+    before = report(steady(at(first, time(5, 0)), at(first, time(6, 0)), sold_kw=1), [first])[0]
+    after = report(steady(at(first, time(7, 0)), at(first, time(8, 0)), sold_kw=1), [first])[0]
+    assert before["sold"]["kwh"] == pytest.approx(tariff.CORRECTION_SOLD_FUSIONSOLAR, abs=1e-3)
+    assert after["sold"]["kwh"] == pytest.approx(S, abs=1e-3)
+    assert S != tariff.CORRECTION_SOLD_FUSIONSOLAR
 
 
 def test_a_reading_across_the_start_of_a_window_is_split_at_it():
@@ -221,6 +231,22 @@ def test_days_are_gathered_into_their_months_with_totals_and_without_half_hours(
     assert october["net_eur"] == pytest.approx(october["bought_total"]["eur"], abs=1e-3)
     assert october["measured_hours"] == pytest.approx(12, abs=0.05)
     assert not september["complete"]  # it starts on the 29th
+
+
+def test_each_day_carries_its_standing_charge_and_share_of_the_pso_levy_and_a_month_adds_up_to_the_bill():
+    start = at(DAY, time(12, 0))
+    [entry] = report(steady(start, start + 3600, sold_kw=2), [DAY])
+    pso = tariff.PSO_LEVY_EUR_PER_MONTH / 31  # October
+    assert entry["standing_charge_eur"] == pytest.approx(tariff.STANDING_CHARGE_EUR_PER_DAY, abs=1e-4)
+    assert entry["pso_levy_eur"] == pytest.approx(pso, abs=1e-4)
+    assert entry["total_eur"] == pytest.approx(entry["net_eur"] + tariff.STANDING_CHARGE_EUR_PER_DAY + pso, abs=1e-3)
+
+    nov = [date(2026, 11, 1) + timedelta(days=n) for n in range(30)]
+    [november] = months(report(steady(at(nov[0], time(0, 0)), at(nov[-1], None), bought_kw=0.1, every=300), nov))
+    assert november["pso_levy_eur"] == pytest.approx(tariff.PSO_LEVY_EUR_PER_MONTH, abs=1e-3)
+    assert november["standing_charge_eur"] == pytest.approx(30 * tariff.STANDING_CHARGE_EUR_PER_DAY, abs=1e-3)
+    assert november["total_eur"] == pytest.approx(
+        november["net_eur"] + november["standing_charge_eur"] + november["pso_levy_eur"], abs=1e-2)
 
 
 def test_months_before_the_first_readings_are_left_out_and_a_whole_measured_month_is_complete():

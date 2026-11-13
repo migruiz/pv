@@ -9,6 +9,7 @@ hour, so each half hour sits in one window: the one its start is in. Pure functi
 """
 
 import bisect
+from calendar import monthrange
 from datetime import date, datetime, time, timedelta
 
 from mock_clock import TZ
@@ -44,7 +45,9 @@ def tariff_info() -> dict:
                   for b in tariff.BANDS],
         "export_cents_per_kwh": tariff.EXPORT_CENTS_PER_KWH,
         "standing_charge_eur_per_day": tariff.STANDING_CHARGE_EUR_PER_DAY,
-        "correction": {"bought": tariff.CORRECTION_BOUGHT, "sold": tariff.CORRECTION_SOLD},
+        "pso_levy_eur_per_month": tariff.PSO_LEVY_EUR_PER_MONTH,
+        "correction": {"bought": tariff.CORRECTION_BOUGHT, "sold": tariff.CORRECTION_SOLD,
+                       "sold_before_own_readings": tariff.CORRECTION_SOLD_FUSIONSOLAR},
     }
 
 
@@ -95,7 +98,7 @@ def report(readings, days: list[date], home=()) -> list[dict]:
             wall = datetime.fromtimestamp(start, TZ).time()
             band = band_at(wall)
             bought *= tariff.CORRECTION_BOUGHT
-            sold *= tariff.CORRECTION_SOLD
+            sold *= tariff.CORRECTION_SOLD if start >= tariff.OWN_READINGS_FROM else tariff.CORRECTION_SOLD_FUSIONSOLAR
             kwh[band] += bought
             sold_kwh += sold
             measured += seconds
@@ -106,6 +109,9 @@ def report(readings, days: list[date], home=()) -> list[dict]:
                            "used_kwh": round(used, 3)})
         eur = {band: value * rates[band] for band, value in kwh.items()}
         sold_eur = sold_kwh * sell
+        net = sum(eur.values()) - sold_eur
+        # Every day its standing charge and its share of the month's PSO levy, so a month adds up to the bill's
+        pso = tariff.PSO_LEVY_EUR_PER_MONTH / monthrange(day.year, day.month)[1]
         length = at(day, None) - at(day, time(0, 0))  # 23 or 25 hours on a clock-change day
         result.append({
             "date": day.isoformat(),
@@ -114,7 +120,10 @@ def report(readings, days: list[date], home=()) -> list[dict]:
             "bought": {band: {"kwh": round(kwh[band], 3), "eur": round(eur[band], 3)} for band in kwh},
             "bought_total": {"kwh": round(sum(kwh.values()), 3), "eur": round(sum(eur.values()), 3)},
             "sold": {"kwh": round(sold_kwh, 3), "eur": round(sold_eur, 3)},
-            "net_eur": round(sum(eur.values()) - sold_eur, 3),
+            "net_eur": round(net, 3),
+            "standing_charge_eur": round(tariff.STANDING_CHARGE_EUR_PER_DAY, 4),
+            "pso_levy_eur": round(pso, 4),
+            "total_eur": round(net + tariff.STANDING_CHARGE_EUR_PER_DAY + pso, 3),
             "used_kwh": round(used_kwh, 3),
             "half_hours": halves,
         })
@@ -155,7 +164,11 @@ def months(days: list[dict]) -> list[dict]:
                              "eur": total(lambda d: d["bought_total"]["eur"])},
             "sold": {"kwh": total(lambda d: d["sold"]["kwh"]), "eur": total(lambda d: d["sold"]["eur"])},
             "net_eur": total(lambda d: d["net_eur"]),
+            "standing_charge_eur": total(lambda d: d["standing_charge_eur"]),
+            "pso_levy_eur": total(lambda d: d["pso_levy_eur"]),
             "used_kwh": total(lambda d: d["used_kwh"]),
         })
+        # From the month's own parts, not its days' rounded totals, so what is shown adds up
+        entry["total_eur"] = round(entry["net_eur"] + entry["standing_charge_eur"] + entry["pso_levy_eur"], 3)
         entry["days"] = entry.pop("days")  # last, after the totals
     return result

@@ -326,11 +326,12 @@ private fun Pending(error: String?, onRetry: () -> Unit) {
     }
 }
 
-/** The tariff the prices are from and the standing charge note, and a failed refresh. */
+/** The tariff the prices are from and its fixed charges, and a failed refresh. */
 @Composable
 private fun Footer(tariff: Tariff, error: String?) {
     Text(
-        "${tariff.name} prices. Standing charge (${euro(tariff.standingChargeEurPerDay)} a day) not included.",
+        "${tariff.name} prices, with VAT. Standing charge ${euro(tariff.standingChargeEurPerDay)} a day, " +
+            "PSO levy ${euro(tariff.psoLevyEurPerMonth)} a month.",
         style = MaterialTheme.typography.bodySmall,
         color = OnSurfaceVariant,
         modifier = Modifier.padding(horizontal = 16.dp),
@@ -382,9 +383,11 @@ private fun DayCard(
             CardHeader(dayLabel(day.date), "Previous day", "Next day", onPrevious, onNext)
 
             Totals(
-                net = day.netEur,
+                total = day.totalEur,
                 bought = day.boughtTotal,
                 sold = day.sold,
+                standingEur = day.standingChargeEur,
+                psoEur = day.psoLevyEur,
                 usedKwh = day.usedKwh,
                 measured = day.measuredHours > 0.0,
                 note = dayNote(day),
@@ -422,12 +425,17 @@ private fun CardHeader(
     }
 }
 
-/** The net, big, then bought and sold, the house's use and a note: a day's or a month's. */
+/**
+ * What it added to the bill, big (bought less sold, with the standing charge and PSO levy), then bought and sold,
+ * the fixed charges, the house's use and a note: a day's or a month's. In kWh, what was bought, without the charges.
+ */
 @Composable
 private fun Totals(
-    net: Double,
+    total: Double,
     bought: Energy,
     sold: Energy,
+    standingEur: Double,
+    psoEur: Double,
     usedKwh: Double?,
     measured: Boolean,
     note: String?,
@@ -439,7 +447,7 @@ private fun Totals(
             Text("No readings", style = MaterialTheme.typography.headlineMedium, color = OnSurfaceVariant)
             return@Column
         }
-        val earned = net < 0
+        val earned = total < 0
         Text(
             when {
                 !inEuro -> "You bought"
@@ -451,7 +459,7 @@ private fun Totals(
         )
         Row(verticalAlignment = Alignment.Bottom) {
             Text(
-                if (inEuro) euro(abs(net)) else kwh(bought.kwh),
+                if (inEuro) euro(abs(total)) else kwh(bought.kwh),
                 fontSize = 44.sp,
                 lineHeight = 48.sp,
                 fontWeight = FontWeight.ExtraBold,
@@ -471,6 +479,14 @@ private fun Totals(
                 inEuro,
                 SolarYellow,
             )
+        }
+        // The fixed charges have no kWh
+        if (inEuro) {
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                CompactValue("Standing charge", euro(standingEur), true, OnSurface)
+                CompactValue("PSO levy", euro(psoEur), true, OnSurface)
+            }
         }
         // Whatever the source (grid, battery or solar): always kWh
         usedKwh?.let { used ->
@@ -898,6 +914,21 @@ private fun DetailRow(label: String, kwhValue: Double, eurValue: Double?, color:
     }
 }
 
+/** A day's standing charge and PSO levy share: euro only, in the euro column of the rows above. */
+@Composable
+private fun FixedChargesRow(eur: Double) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+        Text("Standing charge + PSO", fontSize = 13.sp, color = OnSurfaceVariant, modifier = Modifier.weight(1f))
+        Text(
+            euro(eur),
+            fontSize = 13.sp,
+            color = OnSurfaceVariant,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(64.dp),
+        )
+    }
+}
+
 /** The hours under the half hour each starts: every 4 hours, every 2 from 2x, every hour from 4x. */
 @Composable
 private fun HourLabels(halfHours: List<HalfHour>, zoom: Float, start: Float) {
@@ -1036,9 +1067,11 @@ private fun MonthCard(
             CardHeader(monthLabel(month.month), "Previous month", "Next month", onPrevious, onNext)
 
             Totals(
-                net = month.netEur,
+                total = month.totalEur,
                 bought = month.boughtTotal,
                 sold = month.sold,
+                standingEur = month.standingChargeEur,
+                psoEur = month.psoLevyEur,
                 usedKwh = month.usedKwh,
                 measured = month.measuredHours > 0.0,
                 note = monthNote(month),
@@ -1190,8 +1223,9 @@ private fun DayDetails(
                         )
                     }
                     DetailRow("Sold", day.sold.kwh, day.sold.eur, SolarYellow)
+                    FixedChargesRow(day.standingChargeEur + day.psoLevyEur)
                     day.usedKwh?.let { DetailRow("House used", it, null, OnSurfaceVariant) }
-                    val earned = day.netEur < 0
+                    val earned = day.totalEur < 0
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
                         Text(
                             if (earned) "You earned" else "You spent",
@@ -1200,7 +1234,7 @@ private fun DayDetails(
                             modifier = Modifier.weight(1f),
                         )
                         Text(
-                            euro(abs(day.netEur)),
+                            euro(abs(day.totalEur)),
                             fontSize = 15.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = if (earned) BatteryGreen else OnSurface,

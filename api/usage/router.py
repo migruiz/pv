@@ -69,7 +69,8 @@ async def get_usage(request: Request, days: int = Query(7, ge=1, le=30), end: da
     oldest first; today's is so far.
 
     Each day: kWh and euro bought in each of the tariff's bands, their total, kWh and euro sold, net_eur
-    (bought less sold; the standing charge is not in it) and used_kwh, what the house used from the grid,
+    (bought less sold), the day's standing charge and its share of the month's PSO levy, total_eur (net_eur
+    with both: what the day adds to the bill) and used_kwh, what the house used from the grid,
     the battery and solar; and the same for each half hour. The meter's readings are corrected to match
     ESB's billing meter (see usage/tariff.py); the house's use is as measured. `measured_hours` is how much
     of the day the meter readings cover; a past day is `complete` when it misses less than 15 minutes.

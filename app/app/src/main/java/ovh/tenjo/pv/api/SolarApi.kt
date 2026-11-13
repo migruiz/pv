@@ -103,6 +103,8 @@ data class Tariff(
     val bands: List<TariffBand>,
     @SerializedName("export_cents_per_kwh") val exportCentsPerKwh: Double,
     @SerializedName("standing_charge_eur_per_day") val standingChargeEurPerDay: Double,
+    /** Flat each month, with VAT. */
+    @SerializedName("pso_levy_eur_per_month") val psoLevyEurPerMonth: Double = 0.0,
 )
 
 data class TariffBand(
@@ -129,8 +131,13 @@ data class UsageDay(
     val bought: Map<String, Energy> = emptyMap(),
     @SerializedName("bought_total") val boughtTotal: Energy = Energy(),
     val sold: Energy = Energy(),
-    /** Bought minus sold, without the standing charge: below 0 the day earned money. */
+    /** Bought minus sold, without the standing charge and PSO levy. */
     @SerializedName("net_eur") val netEur: Double = 0.0,
+    @SerializedName("standing_charge_eur") val standingChargeEur: Double = 0.0,
+    /** The day's share of the month's PSO levy. */
+    @SerializedName("pso_levy_eur") val psoLevyEur: Double = 0.0,
+    /** Net with the standing charge and PSO levy: what the day adds to the bill; below 0 the day earned money. */
+    @SerializedName("total_eur") val totalEur: Double = 0.0,
     /** In time order: 48, or 46 / 50 on a clock-change day; today's future ones are zeros. */
     @SerializedName("half_hours") val halfHours: List<HalfHour>? = null,
     /** What the house used from any source (grid, battery or solar), kWh, not corrected. */
@@ -154,8 +161,14 @@ data class UsageMonth(
     val bought: Map<String, Energy> = emptyMap(),
     @SerializedName("bought_total") val boughtTotal: Energy = Energy(),
     val sold: Energy = Energy(),
-    /** Bought minus sold, without the standing charge: below 0 the month earned money. */
+    /** Bought minus sold, without the standing charge and PSO levy. */
     @SerializedName("net_eur") val netEur: Double = 0.0,
+    /** Its days' standing charges. */
+    @SerializedName("standing_charge_eur") val standingChargeEur: Double = 0.0,
+    /** Its days' shares of the PSO levy: the whole levy once the month has ended. */
+    @SerializedName("pso_levy_eur") val psoLevyEur: Double = 0.0,
+    /** Net with the standing charge and PSO levy: what the month adds to the bill; below 0 it earned money. */
+    @SerializedName("total_eur") val totalEur: Double = 0.0,
     /** What the house used from any source (grid, battery or solar), kWh, not corrected. */
     @SerializedName("used_kwh") val usedKwh: Double? = null,
     /** From the 1st to the month's last day, or to today: without their half hours. */
